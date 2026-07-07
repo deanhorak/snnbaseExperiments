@@ -1,0 +1,27 @@
+name: Experiment proposal
+description: Propose a new reproducible snnbase experiment.
+title: "[Experiment]: "
+labels: ["experiment"]
+body:
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+      description: State the question and the expected measurable outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: method
+    attributes:
+      label: Method
+      description: Describe the dataset, controls, metrics, and resource requirements.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Define what makes the experiment complete.
+    validations:
+      required: true
+

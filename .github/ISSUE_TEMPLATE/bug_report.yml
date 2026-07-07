@@ -1,0 +1,37 @@
+name: Bug report
+description: Report a reproducible defect in an experiment or its tooling.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include private datasets, credentials, or other sensitive data.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include the command, configuration, and smallest relevant dataset details.
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Revisions
+      description: Experiment and snnbase commit hashes.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, compiler, and CMake versions.
+    validations:
+      required: true
+

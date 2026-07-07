@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out experiments
+        uses: actions/checkout@v4
+
+      - name: Check out snnbase
+        uses: actions/checkout@v4
+        with:
+          repository: deanhorak/snnbase
+          path: dependencies/snnbase
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DSNNBASE_SOURCE_DIR="$GITHUB_WORKSPACE/dependencies/snnbase"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
