@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out experiments
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check out snnbase
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: deanhorak/snnbase
           path: dependencies/snnbase
