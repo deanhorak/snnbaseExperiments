@@ -481,7 +481,8 @@ void StructuredClassifier::train(const mnist::Dataset& dataset,
       auto& expert = experts[selected];
       for (std::size_t channel = 0; channel < channel_count; ++channel) {
         if (expert.banks[channel].history().size() < prototypes_per_bank) {
-          expert.banks[channel].remember(features[channel], 1.0F);
+          static_cast<void>(expert.banks[channel].remember(features[channel],
+                                                            1.0F));
         }
       }
       ++expert.assignments;
@@ -490,6 +491,10 @@ void StructuredClassifier::train(const mnist::Dataset& dataset,
         const auto [predicted, predicted_expert] =
             impl_->prediction(features);
         if (predicted != label) {
+          for (std::size_t channel = 0; channel < channel_count; ++channel) {
+            static_cast<void>(expert.banks[channel].reinforce_bounded(
+                features[channel], 0.25F, prototypes_per_bank));
+          }
           auto& competitor = impl_->classes[predicted][predicted_expert];
           for (std::size_t channel = 0; channel < channel_count; ++channel) {
             static_cast<void>(

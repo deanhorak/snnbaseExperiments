@@ -28,12 +28,32 @@ std::vector<snnbase::spiking_conv::SampleView> samples(
 
 struct Classifier::Impl {
   explicit Impl(const emnist::Split& split, TrainingConfig training)
-      : classifier(
-            {.class_count = split.class_count,
-             .label_offset = split.label_offset},
-            training) {}
+      : classifier(make_model(split), make_training(std::move(training))) {}
 
-  snnbase::spiking_conv::Classifier classifier;
+  static snnbase::temporal::ModelConfig make_model(const emnist::Split& split) {
+    return {.input_rows = 28,
+            .input_columns = 28,
+            .input_channels = 1,
+            .class_count = split.class_count,
+            .label_offset = split.label_offset,
+            .stem_channels = 16,
+            .stages = {{16, 2, 1}, {32, 2, 2}, {64, 2, 2}},
+            .initial_threshold = 1.0F,
+            .initial_leak = 0.90F,
+            .surrogate_slope = 4.0F,
+            .readout_population = 2,
+            .channel_mean = {0.1736F},
+            .channel_stddev = {0.3317F}};
+  }
+
+  static TrainingConfig make_training(TrainingConfig training) {
+    training.crop_padding = 2;
+    training.horizontal_flip = false;
+    training.cutout_size = 0;
+    return training;
+  }
+
+  snnbase::temporal::Classifier classifier;
 };
 
 Classifier::Classifier(const emnist::Split& split, TrainingConfig config)
@@ -61,8 +81,8 @@ std::size_t Classifier::parameter_count() const noexcept {
   return impl_->classifier.parameter_count();
 }
 
-std::size_t Classifier::neuron_count() const noexcept {
-  return impl_->classifier.neurons().size();
+std::string Classifier::device() const {
+  return impl_->classifier.device();
 }
 
 }  // namespace snnbase_experiments::spiking_conv

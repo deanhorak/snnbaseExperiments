@@ -4,6 +4,18 @@ Reproducible C++20 experiments built on
 [`snnbase`](https://github.com/deanhorak/snnbase). The repository keeps experimental code,
 configuration, validation, and result-reporting conventions separate from the core library.
 
+The repository also contains a scaled Spaun-inspired experiment built on
+`snnbase`, including A0--A7 task protocols, direct spiking recall routes,
+reward-plastic action selection, a delayed spiking counting chain, a two-joint
+arm environment, and an optional native OpenGL GUI. It is not yet behaviorally
+equivalent to Spaun: host orchestration still selects routes and performs parts
+of A5--A7. See
+[docs/SPAUN_EXPERIMENT.md](docs/SPAUN_EXPERIMENT.md) for scope, fidelity limits,
+build instructions, and controls. The current task-specific results and memory
+sweep are recorded in
+[SPAUN_BEHAVIORAL_BENCHMARK.md](docs/results/SPAUN_BEHAVIORAL_BENCHMARK.md) and
+[SPAUN_MEMORY_PARAMETER_SWEEP.md](docs/results/SPAUN_MEMORY_PARAMETER_SWEEP.md).
+
 ## Experiments
 
 ### MNIST digit classification
@@ -26,18 +38,35 @@ to reproduce the original single-event classifier.
 
 ### Deep convolutional spiking classifier
 
-`emnist_deep` adapts EMNIST splits to the library-owned
-`snnbase::spiking_conv::Classifier`. Rate encoding, convolution, neuron
-thresholds, surrogate-gradient training, and Adam now reside in `snnbase`.
-The experiment retains only dataset loading, command-line orchestration, and
-reporting. It reaches 99.05% on EMNIST-MNIST after a 30-epoch asymptote
-sweep, and 99.00% on EMNIST Digits.
+`emnist_deep` adapts EMNIST splits to the library-owned temporal residual SNN.
+It evolves LIF membrane state over explicit timesteps, uses exact autograd
+through temporal batch normalization, trains thresholds and leaks with a
+surrogate gradient, and reports validation accuracy and spike rate separately
+from the final test evaluation. The experiment retains only dataset loading,
+command-line orchestration, and reporting.
+
+### CIFAR-10 color baseline
+
+`cifar10_experiment` reads the standard CIFAR-10 binary batches, encodes each
+32x32 RGB image through `snnbase::spiking_conv::Classifier`, and trains a
+same-padding residual spiking convolution model with RGB rate coding,
+surrogate-gradient Adam updates, optional SEW residual merging, and checkpoint
+support. This is the current native `snnbase` CIFAR path.
+
+`cifar10_deep` is the CIFAR-facing path for `snnbase::temporal::Classifier`.
+Its stem and three residual stages preserve the time axis throughout, apply
+SEW-add to per-timestep spikes, downsample spatially, and use global pooling
+plus a population readout instead of a parameter-heavy flattened dense head.
+AdamW, label smoothing, crop/flip/Cutout augmentation, cosine decay with
+warmup, stratified validation, spike-rate regularization, and deterministic
+seeds are part of the library training API.
 
 ## Prerequisites
 
 - CMake 3.20 or newer
 - A C++20 compiler
 - Ninja (when using the provided presets)
+- LibTorch 2.3 or newer, with CUDA support for GPU training
 - A sibling checkout at `../snnbase`, or an explicit `SNNBASE_SOURCE_DIR`
 - `curl`, `gzip`, and `unzip` to use the dataset download helpers
 
@@ -53,7 +82,9 @@ ctest --preset default
 For a checkout elsewhere:
 
 ```sh
-cmake -S . -B build -G Ninja -DSNNBASE_SOURCE_DIR=/path/to/snnbase
+cmake -S . -B build -G Ninja \
+  -DSNNBASE_SOURCE_DIR=/path/to/snnbase \
+  -DCMAKE_PREFIX_PATH=/path/to/libtorch/share/cmake
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
@@ -133,6 +164,47 @@ Train the deep SNN:
 
 Architecture and results are documented in
 [docs/results/EMNIST_DEEP_SNN.md](docs/results/EMNIST_DEEP_SNN.md).
+
+## Run CIFAR-10
+
+Download and extract the binary CIFAR-10 batches:
+
+```sh
+./scripts/download_cifar10.sh
+```
+
+Run a quick subset:
+
+```sh
+./build-release/cifar10_experiment --train-limit 10000 --test-limit 1000
+```
+
+Run the full baseline:
+
+```sh
+./build-release/cifar10_experiment --epochs 3 --channels 8 --time-steps 4 --no-normalize
+```
+
+Run the residual spiking-conv path on a small smoke subset:
+
+```sh
+./build-release/cifar10_deep --epochs 1 --width 4 --train-limit 20 --test-limit 10
+```
+
+Run the temporal residual SNN and save resumable model/optimizer/epoch state:
+
+```sh
+./build-release/cifar10_deep --epochs 30 --width 32 --blocks 2 \
+  --time-steps 4 --seed 42 --device cuda \
+  --save-checkpoint checkpoints/cifar10-w32.ckpt
+```
+
+Measured results are documented in
+[docs/results/CIFAR10_BASELINE.md](docs/results/CIFAR10_BASELINE.md).
+
+The temporal architecture upgrade, full reruns, and before/after accuracy
+comparison are documented in
+[docs/results/TEMPORAL_ARCHITECTURE_UPGRADE.md](docs/results/TEMPORAL_ARCHITECTURE_UPGRADE.md).
 
 Use `--help` for all options. Dataset files are ignored by Git and must not be committed.
 

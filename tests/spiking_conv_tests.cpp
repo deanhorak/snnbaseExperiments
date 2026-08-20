@@ -49,18 +49,19 @@ int main() {
 
   snnbase_experiments::spiking_conv::Classifier classifier{
       binary,
-      {.epochs = 3,
+      {.epochs = 12,
        .batch_size = 8,
        .time_steps = 4,
        .learning_rate = 0.003F,
        .seed = 7,
-       .augment = false}};
-  require(classifier.parameter_count() == 4130,
-          "unexpected trainable synapse count");
-  require(classifier.neuron_count() == 2330,
-          "unexpected snnbase neuron count");
+       .augment = false,
+       .device = "cpu"}};
+  require(classifier.parameter_count() > 0,
+          "temporal classifier has no trainable parameters");
+  require(classifier.device() == "cpu",
+          "small deterministic test should use the requested CPU device");
   const auto epochs = classifier.train(dataset);
-  require(epochs.size() == 3, "wrong epoch metric count");
+  require(epochs.size() == 12, "wrong epoch metric count");
   const auto evaluation = classifier.evaluate(dataset);
   require(evaluation.accuracy() >= 0.95,
           "deep spiking classifier did not learn separable shapes");

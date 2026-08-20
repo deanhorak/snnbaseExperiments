@@ -45,6 +45,30 @@
       "output": {
         "outputOnFailure": true
       }
+    },
+    {
+      "name": "unit",
+      "configurePreset": "default",
+      "filter": {
+        "include": {
+          "label": "unit"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "smoke",
+      "configurePreset": "default",
+      "filter": {
+        "include": {
+          "label": "smoke"
+        }
+      },
+      "output": {
+        "outputOnFailure": true
+      }
     }
   ]
 }

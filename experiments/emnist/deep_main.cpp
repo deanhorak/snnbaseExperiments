@@ -20,20 +20,39 @@ struct Options {
   std::size_t train_limit{};
   std::size_t test_limit{};
   float minimum_accuracy{};
-  snnbase_experiments::spiking_conv::TrainingConfig training;
+  snnbase_experiments::spiking_conv::TrainingConfig training{
+      .epochs = 20,
+      .batch_size = 128,
+      .time_steps = 4,
+      .learning_rate = 0.001F,
+      .minimum_learning_rate = 1.0e-5F,
+      .weight_decay = 5.0e-4F,
+      .warmup_epochs = 2,
+      .label_smoothing = 0.05F,
+      .spike_rate_target = 0.15F,
+      .spike_rate_penalty = 1.0e-4F,
+      .validation_fraction = 0.1F,
+      .seed = 42,
+      .augment = true,
+      .crop_padding = 2,
+      .horizontal_flip = false,
+      .cutout_size = 0,
+      .device = "auto"};
 };
 
 void usage(std::ostream& output, std::string_view program) {
   output << "Usage: " << program << " [options]\n"
          << "  --data-dir PATH       Uncompressed EMNIST IDX directory\n"
          << "  --split NAME          One EMNIST split (default: mnist)\n"
-         << "  --epochs N            Training epochs (default: 5)\n"
-         << "  --batch-size N        Optimizer batch size (default: 64)\n"
-         << "  --time-steps N        Rate-code timesteps (default: 8)\n"
+         << "  --epochs N            Training epochs (default: 20)\n"
+         << "  --batch-size N        Optimizer batch size (default: 128)\n"
+         << "  --time-steps N        LIF timesteps (default: 4)\n"
          << "  --learning-rate F     Adam learning rate (default: 0.001)\n"
          << "  --train-limit N       Training sample limit (default: all)\n"
          << "  --test-limit N        Test sample limit (default: all)\n"
          << "  --minimum-accuracy F  Fail below accuracy F, in the range 0-1\n"
+         << "  --seed N              Training/data-split seed (default: 42)\n"
+         << "  --device NAME         auto, cpu, or cuda (default: auto)\n"
          << "  --no-augment          Disable translation augmentation\n"
          << "  --help                Show this help\n";
 }
@@ -99,11 +118,29 @@ Options parse_options(int argc, char** argv) {
         throw std::invalid_argument("invalid value for " +
                                     std::string(argument));
       }
+    } else if (argument == "--seed") {
+      options.training.seed = parse_size(value, argument, true);
+    } else if (argument == "--device") {
+      options.training.device = value;
     } else {
       throw std::invalid_argument("unknown option: " + std::string(argument));
     }
   }
   return options;
+}
+
+void print_confusion(
+    const snnbase_experiments::spiking_conv::Evaluation& evaluation,
+    std::size_t class_count) {
+  std::cout << "confusion_matrix_rows_actual_cols_predicted\n";
+  for (std::size_t actual = 0; actual < class_count; ++actual) {
+    std::cout << actual;
+    for (std::size_t predicted = 0; predicted < class_count; ++predicted) {
+      std::cout << ','
+                << evaluation.confusion[actual * class_count + predicted];
+    }
+    std::cout << '\n';
+  }
 }
 
 }  // namespace
@@ -123,17 +160,25 @@ int main(int argc, char** argv) {
               << " train_samples=" << training_data.size()
               << " test_samples=" << test_data.size()
               << " timesteps=" << options.training.time_steps
+              << " seed=" << options.training.seed
+              << " device=" << classifier.device()
               << " parameters=" << classifier.parameter_count()
-              << " snnbase_neurons=" << classifier.neuron_count() << '\n';
+              << '\n';
 
     const auto train_start = std::chrono::steady_clock::now();
     const auto epochs = classifier.train(training_data);
     const auto train_finish = std::chrono::steady_clock::now();
     for (const auto& epoch : epochs) {
-      std::cout << "epoch=" << epoch.epoch << " loss=" << std::fixed
-                << std::setprecision(5) << epoch.loss
+      std::cout << "epoch=" << epoch.epoch << " lr=" << std::scientific
+                << epoch.learning_rate << " train_loss=" << std::fixed
+                << std::setprecision(5) << epoch.training_loss
                 << " train_accuracy=" << std::setprecision(2)
-                << epoch.accuracy * 100.0 << "%"
+                << epoch.training_accuracy * 100.0 << "%"
+                << " validation_loss=" << std::setprecision(5)
+                << epoch.validation_loss
+                << " validation_accuracy=" << std::setprecision(2)
+                << epoch.validation_accuracy * 100.0 << "%"
+                << " spike_rate=" << std::setprecision(4) << epoch.spike_rate
                 << " seconds=" << std::setprecision(3) << epoch.seconds
                 << '\n';
     }
@@ -144,6 +189,8 @@ int main(int argc, char** argv) {
               << evaluation.total << " test_accuracy=" << std::fixed
               << std::setprecision(2) << evaluation.accuracy() * 100.0
               << "% test_loss=" << std::setprecision(5) << evaluation.loss
+              << " test_spike_rate=" << std::setprecision(4)
+              << evaluation.spike_rate
               << "\ntrain_seconds=" << std::setprecision(3)
               << std::chrono::duration<double>(train_finish - train_start)
                      .count()
@@ -151,6 +198,7 @@ int main(int argc, char** argv) {
               << std::chrono::duration<double>(test_finish - train_finish)
                      .count()
               << '\n';
+    print_confusion(evaluation, options.split->class_count);
     if (evaluation.accuracy() < options.minimum_accuracy) {
       std::cerr << "accuracy is below required minimum "
                 << options.minimum_accuracy << '\n';

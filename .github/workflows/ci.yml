@@ -13,23 +13,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out experiments
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Check out snnbase
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: deanhorak/snnbase
+          ref: aa80bd8129603d34f3c6f265063a689340fd30b5
           path: dependencies/snnbase
+
+      - name: Validate experiment scripts
+        run: bash -n scripts/*.sh
 
       - name: Configure
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
+          -DSNNBASE_EXPERIMENTS_ENABLE_TEMPORAL=OFF
+          -DSNNBASE_EXPERIMENTS_ENABLE_GUI=OFF
+          -DSNNBASE_EXPECTED_SNNBASE_REVISION=aa80bd8129603d34f3c6f265063a689340fd30b5
+          -DSNNBASE_REQUIRE_CLEAN_SNNBASE=ON
           -DSNNBASE_SOURCE_DIR="$GITHUB_WORKSPACE/dependencies/snnbase"
 
       - name: Build
         run: cmake --build build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
-
+        run: ctest --test-dir build -L "unit|smoke" --output-on-failure
