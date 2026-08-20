@@ -53,6 +53,9 @@ These revisions are local only. They have not been pushed or merged.
 - `snnbase` temporal backend: with the compatible local toolchain below, the
   library builds 8 targets and passes all 8 tests; the temporal experiments
   pair builds 57 targets and passes all 7 available `unit|smoke` tests.
+- The Torch-enabled CMake target now propagates LibTorch's C++ ABI setting to
+  the base and downstream targets, preventing static-link ABI failures in
+  temporal experiment executables.
 - Dataset download scripts validate archive/content checksums where an
   authoritative checksum is available and fail safely on corrupt downloads.
 - Sweep, confirmation, architecture, and Spaun-memory scripts emit a JSON run
