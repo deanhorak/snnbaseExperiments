@@ -34,11 +34,11 @@ These revisions are local only. They have not been pushed or merged.
 - [x] Preserve tracked and untracked worktree changes in a recoverable snapshot.
 - [x] Make the library test suite pass in exact Debug and Release configurations.
 - [x] Replace transitional assert-based test enforcement with an in-tree test framework.
-- [ ] Publish an immutable library revision consumed by experiments.
+- [x] Publish an immutable library revision consumed by experiments.
 - [x] Add clean-checkout experiment CI configuration and run manifests.
 - [ ] Reproduce temporal results from clean tags with five seeds.
 - [x] Add a native N-MNIST event-stream benchmark harness and parser tests.
-- [ ] Run and publish an artifact-backed N-MNIST benchmark on the real dataset.
+- [x] Run and publish an artifact-backed N-MNIST benchmark on the real dataset.
 - [x] Add checkpoint-level learned digit perception to the Spaun task loop.
 - [ ] Validate learned perception end-to-end on held-out raster/handwriting inputs.
 
@@ -72,8 +72,11 @@ These revisions are local only. They have not been pushed or merged.
   it is not a reportable accuracy result.
 - `nmnist_experiment` reads timestamped, polarity-coded N-MNIST recordings,
   encodes them into temporal event bins, and is covered by generated native
-  binary-record tests. No N-MNIST accuracy is claimed until the actual dataset
-  is acquired and its artifacts are retained.
+  binary-record tests. The complete official 60,000/10,000 split baseline
+  (one epoch, ten bins) achieved 33.91%; its source revisions, archive hashes,
+  command, and output fields are retained in
+  `results/nmnist/full-baseline-2026-08-20/`. This is an event-stream baseline,
+  not a competitive N-MNIST claim.
 
 ## Temporal toolchain gate
 

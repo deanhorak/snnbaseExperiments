@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-08-20T20:47:25Z",
+  "repositories": {
+    "experiments": {
+      "revision": "a941bf3db8d0f801e1fd7041c24ae18f877496eb",
+      "dirty": false
+    },
+    "library": {
+      "revision": "37abded48777968f112fcd5c66d357d0352d9ff2",
+      "dirty": false
+    }
+  },
+  "toolchain": {
+    "cmake": "cmake version 3.28.3",
+    "compiler": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "cuda": "release 12.9"
+  },
+  "hardware": {
+    "cpu": "Intel(R) Xeon(R) CPU E5-2695 v2 @ 2.40GHz",
+    "gpu": "unavailable (NVIDIA driver communication failed)"
+  },
+  "dataset": {
+    "source": "https://www.garrickorchard.com/datasets/n-mnist",
+    "train_zip": {
+      "md5": "20959b8e626244a1b502305a9e6e2031",
+      "sha256": "1a54ee392a5e5082a0bef52911cd9211f63b950a4905ccd8890553804d3335f9"
+    },
+    "test_zip": {
+      "md5": "69ca8762b2fe404d9b9bad1103e97832",
+      "sha256": "6ecfd5d85dbb49a631961d8dc3101871c5be53e645004ee34064f6557d169f09"
+    }
+  },
+  "command": [
+    "nmnist_experiment",
+    "--data-dir", "data/nmnist",
+    "--epochs", "1",
+    "--time-bins", "10",
+    "--novelty", "0.78",
+    "--learning-rate", "0.35"
+  ],
+  "result": {
+    "architecture": "timestamp-binned-prototype-snn",
+    "train_samples": 60000,
+    "test_samples": 10000,
+    "time_bins": 10,
+    "event_bits": 128,
+    "payload_bits": 96,
+    "accuracy_percent": 33.91
+  }
+}
