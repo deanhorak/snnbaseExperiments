@@ -176,6 +176,7 @@ add_library(
   src/cifar10.cpp
   src/emnist.cpp
   src/mnist.cpp
+  src/nmnist.cpp
   src/spaun.cpp
   src/spaun_benchmark_runner.cpp
   src/spaun_benchmarks.cpp
@@ -207,6 +208,8 @@ add_executable(emnist_battery experiments/emnist/main.cpp)
 target_link_libraries(emnist_battery PRIVATE snnbase_experiments::snnbase_experiments)
 add_executable(cifar10_experiment experiments/cifar10/main.cpp)
 target_link_libraries(cifar10_experiment PRIVATE snnbase_experiments::snnbase_experiments)
+add_executable(nmnist_experiment experiments/nmnist/main.cpp)
+target_link_libraries(nmnist_experiment PRIVATE snnbase_experiments::snnbase_experiments)
 add_executable(spaun_experiment experiments/spaun/main.cpp)
 target_link_libraries(spaun_experiment PRIVATE snnbase_experiments::snnbase_experiments)
 add_executable(spaun_benchmark experiments/spaun/benchmark_main.cpp)
@@ -280,6 +283,7 @@ if(MSVC)
   target_compile_options(mnist_experiment PRIVATE /W4 /WX)
   target_compile_options(emnist_battery PRIVATE /W4 /WX)
   target_compile_options(cifar10_experiment PRIVATE /W4 /WX)
+  target_compile_options(nmnist_experiment PRIVATE /W4 /WX)
   target_compile_options(spaun_experiment PRIVATE /W4 /WX)
   target_compile_options(spaun_benchmark PRIVATE /W4 /WX)
   target_compile_options(spaun_vision_benchmark PRIVATE /W4 /WX)
@@ -295,6 +299,7 @@ else()
   target_compile_options(mnist_experiment PRIVATE -Wall -Wextra -Wpedantic -Werror)
   target_compile_options(emnist_battery PRIVATE -Wall -Wextra -Wpedantic -Werror)
   target_compile_options(cifar10_experiment PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  target_compile_options(nmnist_experiment PRIVATE -Wall -Wextra -Wpedantic -Werror)
   target_compile_options(spaun_experiment PRIVATE -Wall -Wextra -Wpedantic -Werror)
   target_compile_options(
     spaun_benchmark
@@ -463,6 +468,16 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME emnist_tests COMMAND emnist_tests)
   set_tests_properties(emnist_tests PROPERTIES LABELS "emnist;unit")
+
+  add_executable(nmnist_tests tests/nmnist_tests.cpp)
+  target_link_libraries(nmnist_tests PRIVATE snnbase_experiments::snnbase_experiments)
+  if(MSVC)
+    target_compile_options(nmnist_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(nmnist_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME nmnist_tests COMMAND nmnist_tests)
+  set_tests_properties(nmnist_tests PROPERTIES LABELS "nmnist;event;unit")
 
   if(SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL)
     add_executable(spiking_conv_tests tests/spiking_conv_tests.cpp)

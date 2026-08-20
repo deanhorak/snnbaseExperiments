@@ -61,6 +61,14 @@ AdamW, label smoothing, crop/flip/Cutout augmentation, cosine decay with
 warmup, stratified validation, spike-rate regularization, and deterministic
 seeds are part of the library training API.
 
+### N-MNIST event-stream baseline
+
+`nmnist_experiment` reads native N-MNIST address-event recordings from
+`Train/<digit>/*.bin` and `Test/<digit>/*.bin`. It preserves timestamps and
+polarity across configurable temporal bins rather than repeating a static
+image. This is a benchmark harness; no dataset result is claimed until the
+official data and complete run artifacts are available.
+
 ## Prerequisites
 
 - CMake 3.20 or newer

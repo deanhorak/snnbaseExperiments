@@ -61,3 +61,23 @@ evaluated only after training. Result reports should record channel width,
 blocks per stage, normalization, timesteps, seed, spike rate, checkpoint use,
 epoch count, train/validation/test limits, and hardware. Multiple-seed reports
 must include every individual result as well as mean and standard deviation.
+
+`scripts/run_cifar10_temporal_seeds.sh` is the promoted protocol runner. It
+writes a per-seed command manifest, log, best-validation checkpoint, final
+checkpoint, and SHA-256 checksums before producing an aggregate CSV. Do not
+report a multi-seed result unless the complete artifact directory is retained.
+
+## N-MNIST event-stream baseline
+
+`nmnist_experiment` consumes native N-MNIST five-byte address-events rather
+than frames. The parser preserves timestamp overflow and ON/OFF polarity; the
+encoder assigns events to fixed temporal bins, then maps downsampled spatial
+cells and polarity into a sequence of `SpikeEvent` payloads. The baseline
+trains a separate prototype neuron for each class and time bin, and scores the
+ordered sequence by mean per-bin similarity.
+
+This establishes an event-camera benchmark path, not an accuracy claim. Any
+reported run must name the N-MNIST archive/source, split, event-bin count,
+prototype parameters, and full artifacts. The test suite uses only generated
+binary event fixtures, so installing the actual N-MNIST dataset is still
+required before measuring the benchmark.

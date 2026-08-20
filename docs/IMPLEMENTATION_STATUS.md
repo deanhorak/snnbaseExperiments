@@ -37,7 +37,8 @@ These revisions are local only. They have not been pushed or merged.
 - [ ] Publish an immutable library revision consumed by experiments.
 - [x] Add clean-checkout experiment CI configuration and run manifests.
 - [ ] Reproduce temporal results from clean tags with five seeds.
-- [ ] Add a true event-stream benchmark.
+- [x] Add a native N-MNIST event-stream benchmark harness and parser tests.
+- [ ] Run and publish an artifact-backed N-MNIST benchmark on the real dataset.
 - [ ] Integrate learned perception into the Spaun-inspired loop.
 
 ## Validation completed
@@ -65,6 +66,10 @@ These revisions are local only. They have not been pushed or merged.
   the mean and sample standard deviation from the five test accuracies. A
   two-seed, 20-example CPU smoke execution verified the complete artifact path;
   it is not a reportable accuracy result.
+- `nmnist_experiment` reads timestamped, polarity-coded N-MNIST recordings,
+  encodes them into temporal event bins, and is covered by generated native
+  binary-record tests. No N-MNIST accuracy is claimed until the actual dataset
+  is acquired and its artifacts are retained.
 
 ## Temporal toolchain gate
 
