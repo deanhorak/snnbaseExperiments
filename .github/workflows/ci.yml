@@ -41,3 +41,40 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build -L "unit|smoke" --output-on-failure
+
+  temporal-container-test:
+    # This is intentionally CPU-only.  It proves the pinned CUDA 12.1/GCC 11
+    # build environment and LibTorch ABI; performance release runs require a
+    # separately provisioned NVIDIA runner.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out experiments
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Check out pinned snnbase
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: deanhorak/snnbase
+          ref: 37abded48777968f112fcd5c66d357d0352d9ff2
+          path: dependencies/snnbase
+
+      - name: Build pinned temporal image
+        run: docker build -f containers/temporal.Dockerfile -t snnbase-temporal:cu121 .
+
+      - name: Configure, build, and test temporal backend
+        run: >-
+          docker run --rm
+          -v "$GITHUB_WORKSPACE/dependencies/snnbase:/workspace/snnbase:ro"
+          -w /workspace/snnbase
+          snnbase-temporal:cu121
+          bash -lc 'cmake -S . -B /tmp/snnbase-temporal -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DSNNBASE_BUILD_EXAMPLES=OFF
+          -DSNNBASE_BUILD_TESTS=ON
+          -DSNNBASE_ENABLE_TORCH=ON
+          -DCMAKE_PREFIX_PATH="$TORCH_CMAKE_PREFIX_PATH"
+          -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.1/bin/nvcc
+          -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-11
+          -DCUDAToolkit_ROOT=/usr/local/cuda-12.1
+          && cmake --build /tmp/snnbase-temporal --target snnbase_temporal_tests -j 4
+          && ctest --test-dir /tmp/snnbase-temporal -R snnbase_temporal_tests --output-on-failure'
