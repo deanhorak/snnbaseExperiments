@@ -52,9 +52,9 @@ These revisions are local only. They have not been pushed or merged.
   forcing assertions back on through compiler flags.
 - `snnbase`: sparse long-delay scheduling, inference-only neurons, learning
   metrics, and normalized spiking-convolution gradient tests are covered.
-- `snnbaseExperiments`: a clean pair against library revision
-  `626babc` builds 48 targets and passes all
-  5 `unit|smoke` tests.
+- `snnbaseExperiments`: a clean pair against the pinned library revision
+  `37abded` builds 53 targets and passes all 6 `unit|smoke` tests, including
+  the native N-MNIST parser and CIFAR-10 dataset smoke coverage.
 - `snnbase` temporal backend: with the compatible local toolchain below, the
   library builds 8 targets and passes all 8 tests; the temporal experiments
   pair builds 57 targets and passes all 7 available `unit|smoke` tests.
@@ -96,6 +96,9 @@ the matching `cmake/toolchains/linux-cuda121-gcc11.cmake`; building and
 exercising it in CI remains required before temporal five-seed results are
 treated as release evidence. The digest-pinned image was built locally and
 passed the `snnbase_temporal_tests` CTest target without GPU access.
+The checked-in GitHub Actions workflow also defines a CPU-only
+`temporal-container-test` job that repeats this build and CTest gate once the
+pinned library revision is published.
 
 ## Current constraints
 
