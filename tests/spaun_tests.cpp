@@ -1,4 +1,6 @@
 #include <snnbase_experiments/spaun.hpp>
+
+#include <snnbase/spiking_conv.hpp>
 #include <snnbase_experiments/spaun_visual.hpp>
 
 #include <algorithm>
@@ -340,6 +342,33 @@ void test_invalid_configuration() {
   require(threw, "zero-neuron Spaun configuration was accepted");
 }
 
+void test_registered_learned_digit_checkpoint_loads_into_spaun() {
+  using namespace snnbase_experiments::spaun;
+  const auto checkpoint = std::filesystem::temp_directory_path() /
+                          "snnbase-spaun-learned-digit.pt";
+  snnbase::spiking_conv::Classifier classifier{
+      {.input_rows = 28,
+       .input_columns = 28,
+       .input_channels = 1,
+       .class_count = 10,
+       .first_convolution = {12, 5, 2, false},
+       .second_convolution = {24, 3, 2, false},
+       .neuron_threshold = 0.5F,
+       .channel_normalization = false,
+       .second_residual = snnbase::spiking_conv::ResidualMerge::none},
+      {.epochs = 1,
+       .batch_size = 64,
+       .time_steps = 8,
+       .learning_rate = 0.001F,
+       .seed = 42,
+       .augment = false}};
+  classifier.save_checkpoint(checkpoint);
+  Model model;
+  model.set_learned_digit_checkpoint(checkpoint);
+  model.set_learned_digit_checkpoint({});
+  std::filesystem::remove(checkpoint);
+}
+
 void test_end_to_end_causal_lesions() {
   using namespace snnbase_experiments::spaun;
   const Config config{.neurons_per_module = 3,
@@ -419,7 +448,8 @@ int main() {
     test_external_reward_contingencies_drive_a2();
     test_recognizable_drawing_geometry();
     test_end_to_end_causal_lesions();
-    test_invalid_configuration();
+  test_invalid_configuration();
+  test_registered_learned_digit_checkpoint_loads_into_spaun();
     std::cout << "spaun_tests: passed\n";
     return EXIT_SUCCESS;
   } catch (const std::exception& error) {

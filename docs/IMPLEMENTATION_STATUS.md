@@ -39,7 +39,8 @@ These revisions are local only. They have not been pushed or merged.
 - [ ] Reproduce temporal results from clean tags with five seeds.
 - [x] Add a native N-MNIST event-stream benchmark harness and parser tests.
 - [ ] Run and publish an artifact-backed N-MNIST benchmark on the real dataset.
-- [ ] Integrate learned perception into the Spaun-inspired loop.
+- [x] Add checkpoint-level learned digit perception to the Spaun task loop.
+- [ ] Validate learned perception end-to-end on held-out raster/handwriting inputs.
 
 ## Validation completed
 

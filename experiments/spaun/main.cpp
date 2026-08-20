@@ -19,6 +19,7 @@ struct Options {
   snnbase_experiments::spaun::Task task{
       snnbase_experiments::spaun::Task::serial_working_memory};
   snnbase_experiments::spaun::Config config;
+  std::filesystem::path learned_digit_checkpoint;
   std::filesystem::path trace_json;
   double minimum_accuracy{};
 };
@@ -36,6 +37,8 @@ void usage(std::ostream& output, std::string_view program) {
          << "  --primacy-recurrence F   First-position recurrent gain\n"
          << "  --recency-recurrence F   Last-position recurrent gain\n"
          << "  --counting-delay N       Neural successor delay per counted item\n"
+         << "  --learned-digit-checkpoint PATH\n"
+         << "                           Route visible digits through registered 28x28 A1 model\n"
          << "  --trace-json PATH        Write complete probe frames as JSON\n"
          << "  --minimum-accuracy F     Fail below task-battery accuracy [0,1]\n"
          << "  --help                    Show this help\n";
@@ -124,6 +127,8 @@ Options parse_options(int argc, char** argv) {
           parse_finite(value, argument);
     } else if (argument == "--counting-delay") {
       options.config.counting_delay_ticks = parse_size(value, argument);
+    } else if (argument == "--learned-digit-checkpoint") {
+      options.learned_digit_checkpoint = value;
     } else if (argument == "--trace-json") {
       options.trace_json = value;
     } else if (argument == "--minimum-accuracy") {
@@ -219,6 +224,9 @@ int main(int argc, char** argv) {
   try {
     const auto options = parse_options(argc, argv);
     snnbase_experiments::spaun::Model model(options.config);
+    if (!options.learned_digit_checkpoint.empty()) {
+      model.set_learned_digit_checkpoint(options.learned_digit_checkpoint);
+    }
     std::vector<snnbase_experiments::spaun::Result> results;
     if (options.all) {
       for (const auto task : snnbase_experiments::spaun::all_tasks()) {

@@ -1,5 +1,7 @@
 #include <snnbase_experiments/spaun.hpp>
 #include <snnbase_experiments/spaun_visual.hpp>
+
+#include <snnbase/spiking_conv.hpp>
 #include <snnbase_experiments/spaun_workspace.hpp>
 
 #include <algorithm>
@@ -322,6 +324,46 @@ struct Model::Impl {
     build_circuit();
   }
 
+  void set_learned_digit_checkpoint(const std::filesystem::path& path) {
+    if (path.empty()) {
+      learned_digit_classifier.reset();
+      return;
+    }
+    learned_digit_classifier = std::make_unique<snnbase::spiking_conv::Classifier>(
+          snnbase::spiking_conv::ModelConfig{
+              .input_rows = 28,
+              .input_columns = 28,
+              .input_channels = 1,
+              .class_count = 10,
+              .first_convolution = {12, 5, 2, false},
+              .second_convolution = {24, 3, 2, false},
+              .neuron_threshold = 0.5F,
+              .channel_normalization = false,
+              .second_residual = snnbase::spiking_conv::ResidualMerge::none},
+          snnbase::spiking_conv::TrainingConfig{
+              .epochs = 1,
+              .batch_size = 64,
+              .time_steps = 8,
+              .learning_rate = 0.001F,
+              .seed = config.seed,
+              .augment = false});
+    learned_digit_classifier->load_checkpoint(path);
+  }
+
+  [[nodiscard]] std::size_t learned_digit(const char symbol) const {
+    std::vector<std::uint8_t> pixels(28 * 28);
+    const auto bitmap = glyph(symbol);
+    for (std::size_t row = 0; row < 28; ++row) {
+      for (std::size_t column = 0; column < 28; ++column) {
+        const auto source_row = row * glyph_rows / 28;
+        const auto source_column = column * glyph_columns / 28;
+        pixels[row * 28 + column] =
+            bitmap[source_row][source_column] == '#' ? std::uint8_t{255} : 0;
+      }
+    }
+    return learned_digit_classifier->predict({28, 28, pixels});
+  }
+
   void build_circuit() {
     for (std::size_t module = 0; module < module_count; ++module) {
       auto& population = populations[module];
@@ -423,8 +465,13 @@ struct Model::Impl {
       const auto capture = [&](const VisualStep& visual_step,
                                const char displayed,
                                const std::string_view phase) {
-        if (visual_step.recognition.has_value() && recognized == ' ') {
-          recognized = *visual_step.recognition;
+        const auto can_use_learned_digit =
+            learned_digit_classifier != nullptr && displayed >= '0' && displayed <= '9';
+        if ((visual_step.recognition.has_value() || can_use_learned_digit) &&
+            recognized == ' ') {
+          recognized = can_use_learned_digit
+                           ? static_cast<char>('0' + learned_digit(displayed))
+                           : *visual_step.recognition;
           observed.push_back(recognized);
           if (recognized == '[') {
             inside_group = true;
@@ -1051,6 +1098,7 @@ struct Model::Impl {
 
   Config config;
   VisualFrontend visual_frontend;
+  std::unique_ptr<snnbase::spiking_conv::Classifier> learned_digit_classifier;
   workspace::Workspace semantic_workspace;
   snnbase::Network network;
   std::array<std::vector<snnbase::NeuronId>, module_count> populations;
@@ -1067,6 +1115,10 @@ Model::Model(Config config) : impl_(std::make_unique<Impl>(std::move(config))) {
 Model::~Model() = default;
 Model::Model(Model&&) noexcept = default;
 Model& Model::operator=(Model&&) noexcept = default;
+
+void Model::set_learned_digit_checkpoint(const std::filesystem::path& path) {
+  impl_->set_learned_digit_checkpoint(path);
+}
 
 Result Model::run(const Trial& trial) {
   return impl_->run(trial);
