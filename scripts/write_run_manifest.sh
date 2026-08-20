@@ -44,6 +44,12 @@ command -v jq >/dev/null 2>&1 || {
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 library_root="${SNNBASE_SOURCE_DIR:-${project_root}/../snnbase}"
+cpu_model="$(lscpu 2>/dev/null | awk -F: '/Model name/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}' || true)"
+cuda_compiler="$(nvcc --version 2>/dev/null | awk -F, '/release/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}' || true)"
+gpu_summary="$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null || true)"
+[[ -n "$cpu_model" ]] || cpu_model="unavailable"
+[[ -n "$cuda_compiler" ]] || cuda_compiler="unavailable"
+[[ -n "$gpu_summary" ]] || gpu_summary="unavailable"
 IFS=: read -r -a environment_dataset_dirs <<< "${SNNBASE_MANIFEST_DATA_DIRS:-}"
 dataset_dirs+=("${environment_dataset_dirs[@]}")
 
@@ -82,6 +88,10 @@ jq -n \
   --argjson library_dirty "$(git_dirty "$library_root")" \
   --arg cmake "$(/usr/bin/cmake --version | head -1)" \
   --arg compiler "$(c++ --version | head -1)" \
+  --arg cpu "$cpu_model" \
+  --arg cuda "$cuda_compiler" \
+  --arg gpu "$gpu_summary" \
+  --arg cwd "$PWD" \
   --argjson command "$(printf '%s\n' "${command_args[@]}" | jq -R -s 'split("\n")[:-1]')" \
   --argjson datasets "$dataset_json" \
   '{schema_version: 1,
@@ -90,7 +100,9 @@ jq -n \
       experiments: {path: $experiments_path, revision: $experiments_revision, dirty: $experiments_dirty},
       library: {path: $library_path, revision: $library_revision, dirty: $library_dirty}
     },
-    toolchain: {cmake: $cmake, compiler: $compiler},
+    toolchain: {cmake: $cmake, compiler: $compiler, cuda: $cuda},
+    hardware: {cpu: $cpu, gpu: $gpu},
+    working_directory: $cwd,
     command: $command,
     datasets: $datasets}' > "$output"
 
