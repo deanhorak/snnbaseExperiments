@@ -24,7 +24,7 @@ The implementation is now being developed on local feature branches:
 | Repository | Branch | Current revision | Working tree |
 |---|---|---|---|
 | `snnbaseExperiments` | `codex/repro-v0.1` | `142d0f4` | Clean |
-| `snnbase` | `codex/repro-v0.1-stabilize` | `ae7d8a7` | Clean |
+| `snnbase` | `codex/repro-v0.1-stabilize` | `626babc` | Clean |
 
 These revisions are local only. They have not been pushed or merged.
 
@@ -48,22 +48,34 @@ These revisions are local only. They have not been pushed or merged.
 - `snnbase`: sparse long-delay scheduling, inference-only neurons, learning
   metrics, and normalized spiking-convolution gradient tests are covered.
 - `snnbaseExperiments`: a clean pair against library revision
-  `ae7d8a79bdc2747965d0b82fbac9a6f371d7f68d` builds 48 targets and passes all
+  `626babc` builds 48 targets and passes all
   5 `unit|smoke` tests.
+- `snnbase` temporal backend: with the compatible local toolchain below, the
+  library builds 8 targets and passes all 8 tests; the temporal experiments
+  pair builds 57 targets and passes all 7 available `unit|smoke` tests.
 - Dataset download scripts validate archive/content checksums where an
   authoritative checksum is available and fail safely on corrupt downloads.
 - Sweep, confirmation, architecture, and Spaun-memory scripts emit a JSON run
   manifest before each promoted command.
 
-## Current validation blockers
+## Temporal toolchain gate
 
-The temporal backend has not yet been promoted to a reproducible gate. On the
-current host, configuring `snnbase` with the installed PyTorch 2.5.1+cu121
-CMake package invokes `/usr/bin/nvcc` (CUDA 12.0) against the active CUDA 12.9
-headers and GCC 13.3. CMake's CUDA compiler-identification test fails with
-`_Float32`/`_Float64` declarations from the system headers. This must be
-resolved by a pinned compatible LibTorch/CUDA/GCC container or toolchain file;
-the temporal option therefore remains opt-in in CI.
+The installed PyTorch 2.5.1+cu121 CMake package requires a matching CUDA 12.1
+compiler and an older host compiler. The validated local recipe is:
+
+```text
+CC=/usr/bin/gcc-11 CXX=/usr/bin/g++-11
+CMAKE_CUDA_COMPILER=/usr/local/cuda-12.1/bin/nvcc
+CMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-11
+CUDAToolkit_ROOT=/usr/local/cuda-12.1
+LD_LIBRARY_PATH unset when running tests and binaries
+```
+
+Using the default `/usr/bin/nvcc` (CUDA 12.0), the CUDA 12.9 symlink, GCC 13,
+or an inherited `/opt/libtorch` library path is not supported: those combinations
+either fail compiler identification or load an ABI-incompatible LibTorch at
+runtime. CI should promote this recipe into a pinned container/toolchain file
+before temporal five-seed results are treated as release evidence.
 
 ## Current constraints
 
