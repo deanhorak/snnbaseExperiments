@@ -91,8 +91,10 @@ LD_LIBRARY_PATH unset when running tests and binaries
 Using the default `/usr/bin/nvcc` (CUDA 12.0), the CUDA 12.9 symlink, GCC 13,
 or an inherited `/opt/libtorch` library path is not supported: those combinations
 either fail compiler identification or load an ABI-incompatible LibTorch at
-runtime. CI should promote this recipe into a pinned container/toolchain file
-before temporal five-seed results are treated as release evidence.
+runtime. A pinned recipe now exists at `containers/temporal.Dockerfile` with
+the matching `cmake/toolchains/linux-cuda121-gcc11.cmake`; building and
+exercising it in CI remains required before temporal five-seed results are
+treated as release evidence.
 
 ## Current constraints
 
