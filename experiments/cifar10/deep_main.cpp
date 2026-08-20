@@ -20,6 +20,7 @@ struct Options {
   std::filesystem::path data_dir{snnbase_experiments::config::cifar10_data_dir};
   std::filesystem::path load_checkpoint;
   std::filesystem::path save_checkpoint;
+  std::filesystem::path save_best_checkpoint;
   std::size_t train_limit{};
   std::size_t test_limit{};
   std::size_t width{32};
@@ -75,6 +76,8 @@ void usage(std::ostream& output, std::string_view program) {
          << "  --test-limit N           Test sample limit (default: all)\n"
          << "  --load-checkpoint PATH   Resume model/AdamW/epoch state\n"
          << "  --save-checkpoint PATH   Save model/AdamW/epoch state\n"
+         << "  --save-best-checkpoint PATH\n"
+         << "                           Save whenever validation accuracy improves\n"
          << "  --evaluate-only          Skip training; requires a checkpoint\n"
          << "  --validation-only        Train and report validation; skip test set\n"
          << "  --minimum-accuracy F     Fail below accuracy F, in the range 0-1\n"
@@ -215,6 +218,8 @@ Options parse_options(int argc, char** argv) {
       options.load_checkpoint = value;
     } else if (argument == "--save-checkpoint") {
       options.save_checkpoint = value;
+    } else if (argument == "--save-best-checkpoint") {
+      options.save_best_checkpoint = value;
     } else if (argument == "--seed") {
       options.training.seed = parse_size(value, argument, true);
     } else if (argument == "--device") {
@@ -309,6 +314,8 @@ int main(int argc, char** argv) {
          .channel_stddev = {0.2470F, 0.2435F, 0.2616F}},
         options.training};
 
+    classifier.set_best_checkpoint_path(options.save_best_checkpoint);
+
     if (!options.load_checkpoint.empty()) {
       classifier.load_checkpoint(options.load_checkpoint);
     }
@@ -337,6 +344,8 @@ int main(int argc, char** argv) {
               << " cutout_size=" << options.training.cutout_size
               << " mean_padding=" << options.training.mean_padding
               << " seed=" << options.training.seed
+              << " best_checkpoint="
+              << options.save_best_checkpoint.string()
               << " device=" << classifier.device()
               << " parameters=" << classifier.parameter_count()
               << '\n';

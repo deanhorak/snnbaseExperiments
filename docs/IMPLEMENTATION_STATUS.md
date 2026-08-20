@@ -23,8 +23,8 @@ The implementation is now being developed on local feature branches:
 
 | Repository | Branch | Current revision | Working tree |
 |---|---|---|---|
-| `snnbaseExperiments` | `codex/repro-v0.1` | `79046c2` | Clean |
-| `snnbase` | `codex/repro-v0.1-stabilize` | `626babc` | Clean |
+| `snnbaseExperiments` | `codex/repro-v0.1` | unpublished local branch tip | Clean |
+| `snnbase` | `codex/repro-v0.1-stabilize` | `51e7699` | Clean |
 
 These revisions are local only. They have not been pushed or merged.
 
@@ -60,6 +60,11 @@ These revisions are local only. They have not been pushed or merged.
   authoritative checksum is available and fail safely on corrupt downloads.
 - Sweep, confirmation, architecture, and Spaun-memory scripts emit a JSON run
   manifest before each promoted command.
+- `run_cifar10_temporal_seeds.sh` writes a manifest, log, best-validation
+  checkpoint, final checkpoint, and checksums for every seed, then calculates
+  the mean and sample standard deviation from the five test accuracies. A
+  two-seed, 20-example CPU smoke execution verified the complete artifact path;
+  it is not a reportable accuracy result.
 
 ## Temporal toolchain gate
 
