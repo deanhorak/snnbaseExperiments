@@ -69,6 +69,15 @@ polarity across configurable temporal bins rather than repeating a static
 image. This is a benchmark harness; no dataset result is claimed until the
 official data and complete run artifacts are available.
 
+Download the official `Train.zip` and `Test.zip` manually from the
+[N-MNIST dataset page](https://sites.google.com/site/garrickorchard/datasets/n-mnist),
+then validate and extract them:
+
+```sh
+./scripts/install_nmnist.sh /path/to/Train.zip /path/to/Test.zip
+./build/nmnist_experiment --epochs 1 --time-bins 10
+```
+
 ## Prerequisites
 
 - CMake 3.20 or newer

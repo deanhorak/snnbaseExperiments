@@ -80,4 +80,7 @@ This establishes an event-camera benchmark path, not an accuracy claim. Any
 reported run must name the N-MNIST archive/source, split, event-bin count,
 prototype parameters, and full artifacts. The test suite uses only generated
 binary event fixtures, so installing the actual N-MNIST dataset is still
-required before measuring the benchmark.
+required before measuring the benchmark. Download the provider's `Train.zip`
+and `Test.zip` archives manually, then use
+`scripts/install_nmnist.sh Train.zip Test.zip`; it checks the documented MD5
+values, validates both ZIP archives, and refuses an incomplete extraction.
