@@ -94,7 +94,8 @@ either fail compiler identification or load an ABI-incompatible LibTorch at
 runtime. A pinned recipe now exists at `containers/temporal.Dockerfile` with
 the matching `cmake/toolchains/linux-cuda121-gcc11.cmake`; building and
 exercising it in CI remains required before temporal five-seed results are
-treated as release evidence.
+treated as release evidence. The digest-pinned image was built locally and
+passed the `snnbase_temporal_tests` CTest target without GPU access.
 
 ## Current constraints
 

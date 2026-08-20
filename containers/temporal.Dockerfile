@@ -1,7 +1,7 @@
 # Reproducible build/runtime image for the LibTorch temporal experiments.
 # Build from the experiments repository root:
 #   docker build -f containers/temporal.Dockerfile -t snnbase-temporal:cu121 .
-FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04@sha256:21196d81f56b48dbee70494d5f10322e1a77cc47ffe202a3bf68eab81533c20f
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \

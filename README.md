@@ -113,7 +113,8 @@ For the LibTorch temporal backend, use the pinned CUDA 12.1/GCC 11 image and
 toolchain specification in [containers/temporal.Dockerfile](containers/temporal.Dockerfile).
 It matches the validated PyTorch 2.5.1+cu121 configuration and avoids an
 inherited `/opt/libtorch` library path. The container recipe has not yet been
-built in CI; it is the required environment for the five-seed release run.
+built in CI; it has been locally built and passed the temporal library test,
+and is the required environment for the five-seed release run.
 
 ## Run MNIST
 
