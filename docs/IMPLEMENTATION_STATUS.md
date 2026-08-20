@@ -24,7 +24,7 @@ The implementation is now being developed on local feature branches:
 | Repository | Branch | Current revision | Working tree |
 |---|---|---|---|
 | `snnbaseExperiments` | `codex/repro-v0.1` | unpublished local branch tip | Clean |
-| `snnbase` | `codex/repro-v0.1-stabilize` | `51e7699` | Clean |
+| `snnbase` | `codex/repro-v0.1-stabilize` | `37abded` | Clean |
 
 These revisions are local only. They have not been pushed or merged.
 
@@ -33,7 +33,7 @@ These revisions are local only. They have not been pushed or merged.
 - [x] Record both repository SHAs and dirty state.
 - [x] Preserve tracked and untracked worktree changes in a recoverable snapshot.
 - [x] Make the library test suite pass in exact Debug and Release configurations.
-- [ ] Replace transitional assert-based test enforcement with a dedicated test framework.
+- [x] Replace transitional assert-based test enforcement with an in-tree test framework.
 - [ ] Publish an immutable library revision consumed by experiments.
 - [x] Add clean-checkout experiment CI configuration and run manifests.
 - [ ] Reproduce temporal results from clean tags with five seeds.
@@ -47,6 +47,9 @@ These revisions are local only. They have not been pushed or merged.
 - `snnbase`: exact 128-bit-event/256-history Debug and Release builds pass all
   7 CTest targets; the installed CMake package also builds a separate
   `find_package(snnbase CONFIG)` consumer.
+- The library test suite now uses test-only requirements that throw detailed
+  failures independently of `NDEBUG`; Release validation no longer relies on
+  forcing assertions back on through compiler flags.
 - `snnbase`: sparse long-delay scheduling, inference-only neurons, learning
   metrics, and normalized spiking-convolution gradient tests are covered.
 - `snnbaseExperiments`: a clean pair against library revision
