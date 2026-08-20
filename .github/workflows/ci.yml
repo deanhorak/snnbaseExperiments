@@ -19,7 +19,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: deanhorak/snnbase
-          ref: aa80bd8129603d34f3c6f265063a689340fd30b5
+          # This revision must be published before enabling the workflow on GitHub.
+          ref: ae7d8a79bdc2747965d0b82fbac9a6f371d7f68d
           path: dependencies/snnbase
 
       - name: Validate experiment scripts
@@ -31,7 +32,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug
           -DSNNBASE_EXPERIMENTS_ENABLE_TEMPORAL=OFF
           -DSNNBASE_EXPERIMENTS_ENABLE_GUI=OFF
-          -DSNNBASE_EXPECTED_SNNBASE_REVISION=aa80bd8129603d34f3c6f265063a689340fd30b5
+          -DSNNBASE_EXPECTED_SNNBASE_REVISION=ae7d8a79bdc2747965d0b82fbac9a6f371d7f68d
           -DSNNBASE_REQUIRE_CLEAN_SNNBASE=ON
           -DSNNBASE_SOURCE_DIR="$GITHUB_WORKSPACE/dependencies/snnbase"
 
