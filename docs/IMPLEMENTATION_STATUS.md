@@ -23,7 +23,7 @@ The implementation is now being developed on local feature branches:
 
 | Repository | Branch | Current revision | Working tree |
 |---|---|---|---|
-| `snnbaseExperiments` | `codex/repro-v0.1` | `142d0f4` | Clean |
+| `snnbaseExperiments` | `codex/repro-v0.1` | `31381e7` | Clean |
 | `snnbase` | `codex/repro-v0.1-stabilize` | `626babc` | Clean |
 
 These revisions are local only. They have not been pushed or merged.
