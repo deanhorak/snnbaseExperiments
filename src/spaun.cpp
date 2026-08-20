@@ -466,7 +466,8 @@ struct Model::Impl {
                                const char displayed,
                                const std::string_view phase) {
         const auto can_use_learned_digit =
-            learned_digit_classifier != nullptr && displayed >= '0' && displayed <= '9';
+            learned_digit_classifier != nullptr && inside_group &&
+            displayed >= '0' && displayed <= '9';
         if ((visual_step.recognition.has_value() || can_use_learned_digit) &&
             recognized == ' ') {
           recognized = can_use_learned_digit

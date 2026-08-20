@@ -138,10 +138,11 @@ benchmark reached **98.35% (9,835/10,000)** on the held-out official MNIST test
 set. That result exceeds Spaun's reported 94% A1 value, but this trained
 classifier can now be loaded into the integrated task model for digit stimuli
 with `spaun_experiment --learned-digit-checkpoint PATH`. The model rasterizes
-the visible 5×7 digit to 28×28 and routes the learned classifier's output into
-the semantic workspace; A, brackets, P, and K remain on the native visual
-route. This is a checkpoint-level integration, not yet a shared latent-spike
-interface or a handwriting-in-the-loop behavioral result.
+the visible 5×7 operand digit to 28×28 and routes the learned classifier's
+output into the semantic workspace; task identifiers plus A, brackets, P, and
+K remain on the native visual route. This is a checkpoint-level integration,
+not yet a shared latent-spike interface or a handwriting-in-the-loop behavioral
+result.
 
 ### Working memory
 

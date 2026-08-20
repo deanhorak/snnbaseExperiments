@@ -162,7 +162,8 @@ class Model {
   [[nodiscard]] Result run(const Trial& trial);
   void reset();
   // Load a registered 28x28 digit classifier. Its predictions replace the
-  // fixed 5x7 matcher for digit stimuli only; task symbols remain native.
+  // fixed 5x7 matcher for digits inside operand groups only; task symbols and
+  // task identifiers remain native control syntax.
   void set_learned_digit_checkpoint(const std::filesystem::path& path);
   void set_pathway_enabled(ModelPathway pathway, bool enabled);
   [[nodiscard]] bool pathway_enabled(ModelPathway pathway) const;
