@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "vision_gate": {
+    "experiments_revision": "cf7377bbaab315a6925f00a80621e35dd0453c51",
+    "library_revision": "37abded48777968f112fcd5c66d357d0352d9ff2",
+    "command": [
+      "spaun_vision_benchmark", "--epochs", "5", "--batch-size", "64",
+      "--time-steps", "8", "--learning-rate", "0.001", "--seed", "42",
+      "--minimum-accuracy", "0.94"
+    ],
+    "held_out_test_samples": 10000,
+    "held_out_correct": 9836,
+    "held_out_accuracy_percent": 98.36,
+    "checkpoint_sha256": "3f90c772f6a9e6814b3ccd148a9585ba2a3c1642f50fbaf1fb0685f7b8d14b06"
+  },
+  "task_loop_gate": {
+    "experiments_revision": "ebfeeb5f7b9bcdf7e5a8a2a9e8b8c226c04fb59a",
+    "library_revision": "37abded48777968f112fcd5c66d357d0352d9ff2",
+    "command": [
+      "spaun_experiment", "--task", "A1", "--learned-digit-checkpoint",
+      "a1.pt", "--minimum-accuracy", "1.0"
+    ],
+    "stimulus": "A1[7]?",
+    "expected": "7",
+    "output": "7",
+    "accuracy_percent": 100.0
+  },
+  "mnist_sha256": {
+    "train_images": "ba891046e6505d7aadcbbe25680a0738ad16aec93bde7f9b65e87a2fc25776db",
+    "train_labels": "65a50cbbf4e906d70832878ad85ccda5333a97f0f4c3dd2ef09a8a9eef7101c5",
+    "test_images": "0fa7898d509279e482958e8ce81c8e77db3f2f8254e26661ceb7762c4d494ce7",
+    "test_labels": "ff7bcfd416de33731a308c3f266cc351222c34898ecbeaf847f06e48f7ec33f2"
+  }
+}

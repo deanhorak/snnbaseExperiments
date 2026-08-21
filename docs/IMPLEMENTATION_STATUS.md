@@ -23,10 +23,11 @@ The implementation is now being developed on local feature branches:
 
 | Repository | Branch | Current revision | Working tree |
 |---|---|---|---|
-| `snnbaseExperiments` | `codex/repro-v0.1` | unpublished local branch tip | Clean |
-| `snnbase` | `codex/repro-v0.1-stabilize` | `37abded` | Clean |
+| `snnbaseExperiments` | `codex/repro-v0.1` | published feature branch / PR #2 | Clean |
+| `snnbase` | `codex/repro-v0.1-stabilize` | published feature branch `37abded` | Clean |
 
-These revisions are local only. They have not been pushed or merged.
+These revisions have been pushed but have not been merged to their default
+branches.
 
 ## Gates
 
@@ -40,7 +41,7 @@ These revisions are local only. They have not been pushed or merged.
 - [x] Add a native N-MNIST event-stream benchmark harness and parser tests.
 - [x] Run and publish an artifact-backed N-MNIST benchmark on the real dataset.
 - [x] Add checkpoint-level learned digit perception to the Spaun task loop.
-- [ ] Validate learned perception end-to-end on held-out raster/handwriting inputs.
+- [x] Validate learned perception end-to-end on held-out raster/handwriting inputs.
 
 ## Validation completed
 
@@ -77,6 +78,11 @@ These revisions are local only. They have not been pushed or merged.
   command, and output fields are retained in
   `results/nmnist/full-baseline-2026-08-20/`. This is an event-stream baseline,
   not a competitive N-MNIST claim.
+- The learned Spaun A1 checkpoint reached 98.36% on the held-out 10,000-image
+  MNIST test split and correctly produced `7` for the task-loop stimulus
+  `A1[7]?` after aspect-preserving centered glyph rasterization. Revisions,
+  checkpoint digest, dataset checksums, and both gate outputs are retained in
+  `results/spaun/learned-a1-2026-08-20/`.
 
 ## Temporal toolchain gate
 
