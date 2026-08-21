@@ -353,12 +353,27 @@ struct Model::Impl {
   [[nodiscard]] std::size_t learned_digit(const char symbol) const {
     std::vector<std::uint8_t> pixels(28 * 28);
     const auto bitmap = glyph(symbol);
-    for (std::size_t row = 0; row < 28; ++row) {
-      for (std::size_t column = 0; column < 28; ++column) {
-        const auto source_row = row * glyph_rows / 28;
-        const auto source_column = column * glyph_columns / 28;
-        pixels[row * 28 + column] =
-            bitmap[source_row][source_column] == '#' ? std::uint8_t{255} : 0;
+    // Preserve the glyph aspect ratio and centre it on the MNIST canvas.
+    // Stretching the 5x7 control glyph to 28x28 changes its geometry far more
+    // than the registered A1 model sees during MNIST training.
+    constexpr std::size_t pixel_scale = 3;
+    constexpr std::size_t rendered_rows = glyph_rows * pixel_scale;
+    constexpr std::size_t rendered_columns = glyph_columns * pixel_scale;
+    constexpr std::size_t row_offset = (28 - rendered_rows) / 2;
+    constexpr std::size_t column_offset = (28 - rendered_columns) / 2;
+    for (std::size_t source_row = 0; source_row < glyph_rows; ++source_row) {
+      for (std::size_t source_column = 0; source_column < glyph_columns;
+           ++source_column) {
+        if (bitmap[source_row][source_column] != '#') {
+          continue;
+        }
+        for (std::size_t row = 0; row < pixel_scale; ++row) {
+          for (std::size_t column = 0; column < pixel_scale; ++column) {
+            pixels[(row_offset + source_row * pixel_scale + row) * 28 +
+                   column_offset + source_column * pixel_scale + column] =
+                std::uint8_t{255};
+          }
+        }
       }
     }
     return learned_digit_classifier->predict({28, 28, pixels});
