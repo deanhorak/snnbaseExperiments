@@ -67,6 +67,15 @@ git_dirty() {
   fi
 }
 
+executable_path="${command_args[0]}"
+if [[ -x "${executable_path}" ]]; then
+  executable_path="$(realpath -- "${executable_path}")"
+  executable_sha256="$(sha256sum "${executable_path}" | awk '{print $1}')"
+else
+  executable_path="unavailable"
+  executable_sha256="unavailable"
+fi
+
 dataset_json='[]'
 for directory in "${dataset_dirs[@]}"; do
   [[ -n "$directory" && -d "$directory" ]] || continue
@@ -92,6 +101,8 @@ jq -n \
   --arg cuda "$cuda_compiler" \
   --arg gpu "$gpu_summary" \
   --arg cwd "$PWD" \
+  --arg executable_path "$executable_path" \
+  --arg executable_sha256 "$executable_sha256" \
   --argjson command "$(printf '%s\n' "${command_args[@]}" | jq -R -s 'split("\n")[:-1]')" \
   --argjson datasets "$dataset_json" \
   '{schema_version: 1,
@@ -103,6 +114,7 @@ jq -n \
     toolchain: {cmake: $cmake, compiler: $compiler, cuda: $cuda},
     hardware: {cpu: $cpu, gpu: $gpu},
     working_directory: $cwd,
+    executable: {path: $executable_path, sha256: $executable_sha256},
     command: $command,
     datasets: $datasets}' > "$output"
 

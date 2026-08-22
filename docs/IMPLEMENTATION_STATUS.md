@@ -37,7 +37,7 @@ branches.
 - [x] Replace transitional assert-based test enforcement with an in-tree test framework.
 - [x] Publish an immutable library revision consumed by experiments.
 - [x] Add clean-checkout experiment CI configuration and run manifests.
-- [ ] Reproduce temporal results from clean tags with five seeds.
+- [x] Reproduce a full temporal result with five seeds from clean published revisions.
 - [x] Add a native N-MNIST event-stream benchmark harness and parser tests.
 - [x] Run and publish an artifact-backed N-MNIST benchmark on the real dataset.
 - [x] Add checkpoint-level learned digit perception to the Spaun task loop.
@@ -71,6 +71,12 @@ branches.
   the mean and sample standard deviation from the five test accuracies. A
   two-seed, 20-example CPU smoke execution verified the complete artifact path;
   it is not a reportable accuracy result.
+- The full CIFAR-10 temporal SEW-ResNet protocol completed five 100-epoch CUDA
+  runs: 90.582% +/- 0.120% test accuracy. Per-seed selected checkpoints,
+  final checkpoints, manifests, logs, hashes, configuration, dataset digests,
+  and the aggregate are recorded in
+  `results/cifar10/temporal-sew-resnet-five-seed-2026-08-20/`; the complete
+  large artifact directory remains locally retained and ignored.
 - `nmnist_experiment` reads timestamped, polarity-coded N-MNIST recordings,
   encodes them into temporal event bins, and is covered by generated native
   binary-record tests. The complete official 60,000/10,000 split baseline
