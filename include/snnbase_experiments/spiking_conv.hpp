@@ -1,19 +1,20 @@
 #ifndef SNNBASE_EXPERIMENTS_SPIKING_CONV_HPP
 #define SNNBASE_EXPERIMENTS_SPIKING_CONV_HPP
 
-#include <snnbase/spiking_conv.hpp>
+#include <snnbase/temporal_resnet.hpp>
 #include <snnbase_experiments/emnist.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace snnbase_experiments::spiking_conv {
 
-using TrainingConfig = snnbase::spiking_conv::TrainingConfig;
-using EpochMetrics = snnbase::spiking_conv::EpochMetrics;
-using Evaluation = snnbase::spiking_conv::Evaluation;
+using TrainingConfig = snnbase::temporal::TrainingConfig;
+using EpochMetrics = snnbase::temporal::EpochMetrics;
+using Evaluation = snnbase::temporal::Evaluation;
 
 class Classifier {
  public:
@@ -30,7 +31,7 @@ class Classifier {
   [[nodiscard]] Evaluation evaluate(const mnist::Dataset& dataset) const;
   [[nodiscard]] std::uint8_t predict(const mnist::Image& image) const;
   [[nodiscard]] std::size_t parameter_count() const noexcept;
-  [[nodiscard]] std::size_t neuron_count() const noexcept;
+  [[nodiscard]] std::string device() const;
 
  private:
   struct Impl;

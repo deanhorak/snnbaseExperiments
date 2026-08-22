@@ -8,7 +8,14 @@ source_url="https://biometrics.nist.gov/cs_links/EMNIST/gzip.zip"
 
 mkdir -p "$destination"
 if [[ ! -f "$archive" ]]; then
-  curl --fail --location --retry 3 --output "$archive" "$source_url"
+  curl --fail --location --retry 3 --retry-delay 2 \
+    --output "$archive.partial" "$source_url"
+  mv "$archive.partial" "$archive"
+fi
+
+if ! unzip -tq "$archive" >/dev/null; then
+  echo "EMNIST archive failed ZIP integrity validation: $archive" >&2
+  exit 1
 fi
 
 unzip -o -j "$archive" 'gzip/*.gz' -d "$destination"

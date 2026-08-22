@@ -1,5 +1,6 @@
 /build*/
 /data/
+/artifacts/
 /.cache/
 /.idea/
 /.vscode/
@@ -8,4 +9,3 @@ compile_commands.json
 *.swp
 *.swo
 .DS_Store
-

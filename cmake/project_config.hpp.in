@@ -2,13 +2,23 @@
 #define SNNBASE_EXPERIMENTS_PROJECT_CONFIG_HPP
 
 #include <filesystem>
+#include <string_view>
 
 namespace snnbase_experiments::config {
+
+inline constexpr std::string_view experiments_git_revision{
+    "@SNNBASE_EXPERIMENTS_GIT_REVISION@"};
+inline constexpr bool experiments_git_dirty = @SNNBASE_EXPERIMENTS_GIT_DIRTY@;
+inline constexpr std::string_view snnbase_git_revision{
+    "@SNNBASE_SNNBASE_GIT_REVISION@"};
+inline constexpr bool snnbase_git_dirty = @SNNBASE_SNNBASE_GIT_DIRTY@;
 
 inline const std::filesystem::path mnist_data_dir{
     R"mnist(@SNNBASE_EXPERIMENTS_MNIST_DATA_DIR@)mnist"};
 inline const std::filesystem::path emnist_data_dir{
     R"emnist(@SNNBASE_EXPERIMENTS_EMNIST_DATA_DIR@)emnist"};
+inline const std::filesystem::path cifar10_data_dir{
+    R"cifar10(@SNNBASE_EXPERIMENTS_CIFAR10_DATA_DIR@)cifar10"};
 
 }  // namespace snnbase_experiments::config
 

@@ -1,5 +1,14 @@
 # Experiment protocol
 
+Layer-by-layer diagrams for every classifier are collected in
+[NETWORK_DIAGRAMS.md](NETWORK_DIAGRAMS.md), including both EMNIST modes, the
+handcrafted CIFAR feature classifier, and both CIFAR spiking convolutional
+networks.
+
+The scaled perception-cognition-action experiment is documented in
+[SPAUN_EXPERIMENT.md](SPAUN_EXPERIMENT.md), with its first deterministic result
+in [results/SPAUN_BASELINE.md](results/SPAUN_BASELINE.md).
+
 An experiment is complete when another developer can reproduce its inputs, configuration, and
 metrics from documented commands.
 
@@ -24,3 +33,54 @@ similarity among ten class neurons.
 The test suite uses generated 2×2 IDX fixtures to validate file parsing and the learning path.
 When the MNIST files are installed, CMake also registers a full-dataset `mnist_accuracy` test with
 an 85% regression floor. The optimized baseline measured 86.52% accuracy.
+
+## CIFAR-10 baseline
+
+The harness reads the official binary batches and adapts each 32x32 RGB image
+to `snnbase::spiking_conv::ImageView`. The default research path uses RGB rate
+encoding into `SpikeEvent` payload chunks, two same-padding convolution stages,
+`Neuron`-controlled quantized firing rates, SEW-add residual merging,
+surrogate-gradient backpropagation, Adam updates, and deterministic one-pixel
+translation augmentation.
+
+The test suite uses generated binary records to validate batch parsing,
+limits, invalid labels, color/spatial encoding, and the learning path.
+
+## CIFAR-10 temporal residual SNN
+
+`cifar10_deep` adapts the same CIFAR-10 binary batches into
+`snnbase::spiking_conv::SampleView` instances with 32x32x3 channel-major image
+views. The library model preserves `[time, batch, channel, row, column]`
+through every convolution, evolves learned LIF membrane state, applies exact
+autograd through temporal batch normalization, and merges residual branches by
+SEW-add at each timestep. Spatial downsampling, global pooling, and a population
+readout replace the old two-convolution/flattened-head topology.
+
+Training uses a stratified holdout from the training partition; the test set is
+evaluated only after training. Result reports should record channel width,
+blocks per stage, normalization, timesteps, seed, spike rate, checkpoint use,
+epoch count, train/validation/test limits, and hardware. Multiple-seed reports
+must include every individual result as well as mean and standard deviation.
+
+`scripts/run_cifar10_temporal_seeds.sh` is the promoted protocol runner. It
+writes a per-seed command manifest, log, best-validation checkpoint, final
+checkpoint, and SHA-256 checksums before producing an aggregate CSV. Do not
+report a multi-seed result unless the complete artifact directory is retained.
+
+## N-MNIST event-stream baseline
+
+`nmnist_experiment` consumes native N-MNIST five-byte address-events rather
+than frames. The parser preserves timestamp overflow and ON/OFF polarity; the
+encoder assigns events to fixed temporal bins, then maps downsampled spatial
+cells and polarity into a sequence of `SpikeEvent` payloads. The baseline
+trains a separate prototype neuron for each class and time bin, and scores the
+ordered sequence by mean per-bin similarity.
+
+This establishes an event-camera benchmark path, not an accuracy claim. Any
+reported run must name the N-MNIST archive/source, split, event-bin count,
+prototype parameters, and full artifacts. The test suite uses only generated
+binary event fixtures, so installing the actual N-MNIST dataset is still
+required before measuring the benchmark. Download the provider's `Train.zip`
+and `Test.zip` archives manually, then use
+`scripts/install_nmnist.sh Train.zip Test.zip`; it checks the documented MD5
+values, validates both ZIP archives, and refuses an incomplete extraction.
