@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import sys
 import tempfile
@@ -13,6 +14,11 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "tools"))
 
 from chatbot_prepare import (  # noqa: E402
+    CONVERSION_MANIFEST_KIND,
+    CONVERSION_MANIFEST_SCHEMA_VERSION,
+    DERIVATION_KIND,
+    PREPARED_CONVERSION_MANIFEST_FILENAME,
+    PREPARED_LINEAGE_FILENAME,
     bounded_binary_lines,
     build_parser,
     prepare_record,
@@ -31,6 +37,11 @@ from qwen_contract import (  # noqa: E402
     verify_asset_manifest,
 )
 
+TEST_TREE_ID = "00000000-0000-4000-8000-000000000002"
+TEST_ASSISTANT_ID = "00000000-0000-4000-8000-000000000003"
+OTHER_TREE_ID = "00000000-0000-4000-8000-000000000006"
+OTHER_ASSISTANT_ID = "00000000-0000-4000-8000-000000000007"
+
 
 class FakeByteTokenizer:
     def apply_chat_template(
@@ -46,6 +57,109 @@ class FakeByteTokenizer:
             f"<{item['role']}>{item['content']}</{item['role']}>\n" for item in messages
         )
         return list(text.encode("utf-8")) if tokenize else text
+
+
+def _canonical_json(value: object) -> bytes:
+    return (
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _conversion_bundle(
+    root: Path,
+    canonical_source: Path,
+    *,
+    model_id: str,
+    revision: str,
+    fingerprint: str,
+) -> tuple[Path, dict[str, object]]:
+    root.mkdir()
+    lineage = _canonical_json(
+        {
+            "tree_id": TEST_TREE_ID,
+            "message_ids": [TEST_TREE_ID, TEST_ASSISTANT_ID],
+        }
+    )
+    (root / "lineage.jsonl").write_bytes(lineage)
+    source_bytes = canonical_source.read_bytes()
+    source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+    document: dict[str, object] = {
+        "schema_version": CONVERSION_MANIFEST_SCHEMA_VERSION,
+        "kind": CONVERSION_MANIFEST_KIND,
+        "status": "completed",
+        "canonical_serialization": "utf8-json-sort-keys-compact-lf-v1",
+        "converter": {
+            "filename": "oasst2_convert.py",
+            "version": "1.0.0",
+            "size_bytes": 1234,
+            "sha256": "1" * 64,
+        },
+        "source": {
+            "filename": "ready.trees.jsonl.gz",
+            "source_uri": "https://example.invalid/oasst2/resolve/" + "2" * 40,
+            "version": "2" * 40,
+            "license": "Apache-2.0",
+            "license_reviewed": True,
+            "policy_reviewed": True,
+            "compression": "gzip",
+            "compressed": {"size_bytes": 100, "sha256": "3" * 64},
+            "decompressed": {"size_bytes": 200, "sha256": "4" * 64},
+        },
+        "output": {
+            "path": canonical_source.name,
+            "size_bytes": len(source_bytes),
+            "sha256": source_sha256,
+            "record_count": 1,
+            "message_count": 2,
+            "content_bytes": 2,
+            "fields": ["id", "messages"],
+        },
+        "lineage": {
+            "path": "lineage.jsonl",
+            "size_bytes": len(lineage),
+            "sha256": hashlib.sha256(lineage).hexdigest(),
+            "record_count": 1,
+            "fields": ["tree_id", "message_ids"],
+            "contains_user_ids_or_text": False,
+        },
+        "tokenizer": {
+            "model_id": model_id,
+            "revision": revision,
+            "fingerprint_sha256": fingerprint,
+            "template": {
+                "add_generation_prompt": False,
+                "enable_thinking": True,
+            },
+            "maximum_input_tokens": 512,
+            "selected_maximum_token_count": 32,
+        },
+        "counts": {"selected_tree_count": 1},
+        "filter_reasons": {},
+        "policy": {
+            "profile": "quality05",
+            "conservative_zero": {"active": False},
+            "quality05": {"active": True},
+        },
+        "split": {
+            "algorithm": "sha256-seed-bucket-v1",
+            "seed": 42,
+            "bucket_count": 10_000,
+            "test_buckets_inclusive": [0, 999],
+            "validation_buckets_inclusive": [1000, 1999],
+            "train_buckets_inclusive": [2000, 9999],
+            "record_counts": {"train": 1, "validation": 0, "test": 0},
+        },
+    }
+    manifest = root / "conversion-manifest.json"
+    manifest.write_bytes(_canonical_json(document))
+    return manifest, document
 
 
 class ChatbotPrepareTests(unittest.TestCase):
@@ -326,7 +440,7 @@ class ChatbotPrepareTests(unittest.TestCase):
             "train": [
                 {
                     "schema_version": 1,
-                    "id": "t",
+                    "id": TEST_TREE_ID,
                     "input_ids": [1, 2],
                     "loss_mask": [0, 1],
                 }
@@ -392,6 +506,284 @@ class ChatbotPrepareTests(unittest.TestCase):
                     revision="0123456789abcdef0123456789abcdef01234567",
                     tokenizer_fingerprint="e2f448429ba76678d32ed7cf99e8d9adb031944a11a170771365a0f76f29a742",
                 )
+
+    def test_dataset_writer_copies_and_hash_binds_conversion_derivation(self) -> None:
+        records = {
+            "train": [
+                {
+                    "schema_version": 1,
+                    "id": TEST_TREE_ID,
+                    "input_ids": [1, 2],
+                    "loss_mask": [0, 1],
+                }
+            ],
+            "validation": [],
+            "test": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "conversations.jsonl"
+            source.write_text(
+                f'{{"id":"{TEST_TREE_ID}","messages":['
+                '{"content":"A","role":"user"},'
+                '{"content":"B","role":"assistant"}]}\n',
+                encoding="utf-8",
+            )
+            source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+            conversion_manifest, conversion_document = _conversion_bundle(
+                root / "conversion",
+                source,
+                model_id="tests/FakeQwen",
+                revision="5" * 40,
+                fingerprint="6" * 64,
+            )
+            output = root / "prepared"
+            manifest = write_dataset(
+                output,
+                records,
+                source_path=source,
+                source_size_bytes=source.stat().st_size,
+                source_sha256=source_sha256,
+                source_uri=f"urn:sha256:{source_sha256}",
+                source_version=f"sha256:{source_sha256}",
+                source_license="Apache-2.0",
+                model_id="tests/FakeQwen",
+                revision="5" * 40,
+                tokenizer_fingerprint="6" * 64,
+                conversion_manifest_path=conversion_manifest,
+            )
+
+            derivation = manifest["derivation"]
+            self.assertEqual(derivation["kind"], DERIVATION_KIND)
+            self.assertEqual(derivation["profile"], "quality05")
+            self.assertEqual(derivation["raw_source"], conversion_document["source"])
+            self.assertEqual(derivation["converter"], conversion_document["converter"])
+            copied_manifest = output / PREPARED_CONVERSION_MANIFEST_FILENAME
+            copied_lineage = output / PREPARED_LINEAGE_FILENAME
+            self.assertEqual(
+                copied_manifest.read_bytes(), conversion_manifest.read_bytes()
+            )
+            self.assertEqual(
+                hashlib.sha256(copied_manifest.read_bytes()).hexdigest(),
+                derivation["conversion_manifest"]["sha256"],
+            )
+            self.assertEqual(
+                hashlib.sha256(copied_lineage.read_bytes()).hexdigest(),
+                derivation["lineage"]["sha256"],
+            )
+            self.assertEqual(copied_manifest.stat().st_mode & 0o777, 0o444)
+            self.assertEqual(copied_lineage.stat().st_mode & 0o777, 0o444)
+            self.assertIn("conversion_manifest", derivation)
+            self.assertIn("lineage", derivation)
+            action = next(
+                item
+                for item in build_parser()._actions
+                if item.dest == "conversion_manifest"
+            )
+            self.assertFalse(action.required)
+
+    def test_conversion_derivation_rejects_mismatch_swap_and_non_strict_json(
+        self,
+    ) -> None:
+        records = {
+            "train": [
+                {
+                    "schema_version": 1,
+                    "id": TEST_TREE_ID,
+                    "input_ids": [1, 2],
+                    "loss_mask": [0, 1],
+                }
+            ],
+            "validation": [],
+            "test": [],
+        }
+        mutations = (
+            "output-hash",
+            "tokenizer",
+            "extra-field",
+            "profile",
+            "raw-version",
+            "http-no-authority",
+            "lineage-swap",
+            "lineage-extra-field",
+            "lineage-non-uuid",
+            "lineage-wrong-tree",
+            "manifest-rename",
+            "lineage-rename",
+            "duplicate-key",
+            "nan",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "conversations.jsonl"
+            source.write_text(
+                f'{{"id":"{TEST_TREE_ID}","messages":['
+                '{"content":"A","role":"user"},'
+                '{"content":"B","role":"assistant"}]}\n',
+                encoding="utf-8",
+            )
+            source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+            for index, mutation in enumerate(mutations):
+                with self.subTest(mutation=mutation):
+                    conversion_manifest, document = _conversion_bundle(
+                        root / f"conversion-{index}",
+                        source,
+                        model_id="tests/FakeQwen",
+                        revision="5" * 40,
+                        fingerprint="6" * 64,
+                    )
+                    if mutation == "output-hash":
+                        document["output"]["sha256"] = "7" * 64
+                    elif mutation == "tokenizer":
+                        document["tokenizer"]["fingerprint_sha256"] = "7" * 64
+                    elif mutation == "extra-field":
+                        document["unexpected"] = True
+                    elif mutation == "profile":
+                        document["policy"]["profile"] = "unreviewed-profile"
+                    elif mutation == "raw-version":
+                        document["source"]["version"] = "latest"
+                    elif mutation == "http-no-authority":
+                        document["source"]["source_uri"] = "https:relative"
+                    elif mutation == "lineage-swap":
+                        (conversion_manifest.parent / "lineage.jsonl").write_text(
+                            '{"message_ids":["other"],"tree_id":"other"}\n',
+                            encoding="utf-8",
+                        )
+                    elif mutation in (
+                        "lineage-extra-field",
+                        "lineage-non-uuid",
+                        "lineage-wrong-tree",
+                    ):
+                        if mutation == "lineage-extra-field":
+                            lineage_record = {
+                                "tree_id": TEST_TREE_ID,
+                                "message_ids": [TEST_TREE_ID, TEST_ASSISTANT_ID],
+                                "text": "must never be retained",
+                            }
+                        elif mutation == "lineage-non-uuid":
+                            lineage_record = {
+                                "tree_id": "not-a-uuid",
+                                "message_ids": ["not-a-uuid", TEST_ASSISTANT_ID],
+                            }
+                        else:
+                            lineage_record = {
+                                "tree_id": OTHER_TREE_ID,
+                                "message_ids": [OTHER_TREE_ID, OTHER_ASSISTANT_ID],
+                            }
+                        lineage_bytes = _canonical_json(lineage_record)
+                        (conversion_manifest.parent / "lineage.jsonl").write_bytes(
+                            lineage_bytes
+                        )
+                        document["lineage"]["size_bytes"] = len(lineage_bytes)
+                        document["lineage"]["sha256"] = hashlib.sha256(
+                            lineage_bytes
+                        ).hexdigest()
+                    elif mutation == "manifest-rename":
+                        renamed_manifest = conversion_manifest.with_name("renamed.json")
+                        conversion_manifest.rename(renamed_manifest)
+                        conversion_manifest = renamed_manifest
+                    elif mutation == "lineage-rename":
+                        lineage = conversion_manifest.parent / "lineage.jsonl"
+                        lineage.rename(
+                            conversion_manifest.parent / "renamed-lineage.jsonl"
+                        )
+                        document["lineage"]["path"] = "renamed-lineage.jsonl"
+                    elif mutation == "duplicate-key":
+                        encoded = _canonical_json(document)
+                        conversion_manifest.write_bytes(
+                            encoded.replace(
+                                b'{"canonical_serialization":',
+                                b'{"kind":"duplicate","canonical_serialization":',
+                                1,
+                            )
+                        )
+                    elif mutation == "nan":
+                        document["counts"] = {"bad": float("nan")}
+                        conversion_manifest.write_text(
+                            json.dumps(
+                                document,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                                allow_nan=True,
+                            )
+                            + "\n",
+                            encoding="utf-8",
+                        )
+                    if mutation not in (
+                        "lineage-swap",
+                        "manifest-rename",
+                        "duplicate-key",
+                        "nan",
+                    ):
+                        conversion_manifest.write_bytes(_canonical_json(document))
+                    with self.assertRaises(ContractError):
+                        write_dataset(
+                            root / f"prepared-{index}",
+                            records,
+                            source_path=source,
+                            source_size_bytes=source.stat().st_size,
+                            source_sha256=source_sha256,
+                            source_uri=f"urn:sha256:{source_sha256}",
+                            source_version=f"sha256:{source_sha256}",
+                            source_license="Apache-2.0",
+                            model_id="tests/FakeQwen",
+                            revision="5" * 40,
+                            tokenizer_fingerprint="6" * 64,
+                            conversion_manifest_path=conversion_manifest,
+                        )
+                    self.assertFalse((root / f"prepared-{index}").exists())
+
+    def test_derived_canonical_source_provenance_cannot_be_overridden(self) -> None:
+        records = {
+            "train": [
+                {
+                    "schema_version": 1,
+                    "id": TEST_TREE_ID,
+                    "input_ids": [1, 2],
+                    "loss_mask": [0, 1],
+                }
+            ],
+            "validation": [],
+            "test": [],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "conversations.jsonl"
+            source.write_text("canonical\n", encoding="utf-8")
+            source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+            conversion_manifest, _ = _conversion_bundle(
+                root / "conversion",
+                source,
+                model_id="tests/FakeQwen",
+                revision="5" * 40,
+                fingerprint="6" * 64,
+            )
+            common = {
+                "records": records,
+                "source_path": source,
+                "source_size_bytes": source.stat().st_size,
+                "source_sha256": source_sha256,
+                "source_uri": f"urn:sha256:{source_sha256}",
+                "source_version": f"sha256:{source_sha256}",
+                "source_license": "Apache-2.0",
+                "model_id": "tests/FakeQwen",
+                "revision": "5" * 40,
+                "tokenizer_fingerprint": "6" * 64,
+                "conversion_manifest_path": conversion_manifest,
+            }
+            for index, override in enumerate(
+                (
+                    {"source_uri": "https://example.invalid/canonical"},
+                    {"source_version": "sha256:wrong"},
+                    {"source_license": "CC0-1.0"},
+                )
+            ):
+                with self.subTest(override=override):
+                    with self.assertRaises(ContractError):
+                        write_dataset(
+                            root / f"bad-provenance-{index}",
+                            **{**common, **override},
+                        )
 
     def test_dataset_writer_rejects_source_changed_after_consumption(self) -> None:
         records: dict[str, list[dict[str, object]]] = {

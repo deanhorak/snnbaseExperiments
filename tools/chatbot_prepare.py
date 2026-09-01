@@ -5,13 +5,17 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Iterable, Mapping, Sequence
+from typing import IO, Any, Collection, Iterable, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from chatbot_token_protocol import MAX_INPUT_TOKENS_DEFAULT, PROTOCOL
@@ -21,6 +25,8 @@ from qwen_contract import (
     PHASE0_REVISION,
     PHASE0_TOKENIZER_FINGERPRINT,
     load_transformers_tokenizer,
+    require_revision,
+    require_sha256,
     sha256_file,
     verify_asset_manifest,
     write_json_atomic,
@@ -37,6 +43,35 @@ MAX_SOURCE_ID_BYTES_DEFAULT = 256
 MAX_SOURCE_MESSAGES_PER_CONVERSATION_DEFAULT = 128
 MAX_SOURCE_CONTENT_BYTES_PER_MESSAGE_DEFAULT = 1024 * 1024
 MAX_PROVENANCE_FIELD_BYTES = 4096
+CONVERSION_MANIFEST_KIND = "snnbase.oasst2-conversion-manifest"
+CONVERSION_MANIFEST_SCHEMA_VERSION = 1
+CONVERSION_CANONICAL_SERIALIZATION = "utf8-json-sort-keys-compact-lf-v1"
+CONVERSION_PROFILES = ("conservative-zero", "quality05")
+DERIVATION_KIND = "snnbase.chatbot-conversion-derivation"
+DERIVATION_SCHEMA_VERSION = 1
+PREPARED_CONVERSION_MANIFEST_FILENAME = "source-conversion-manifest.json"
+PREPARED_LINEAGE_FILENAME = "source-lineage.jsonl"
+MAX_CONVERSION_MANIFEST_BYTES = 1024 * 1024
+MAX_CONVERSION_LINEAGE_BYTES = 256 * 1024 * 1024
+MAX_CONVERSION_LINEAGE_LINE_BYTES = 64 * 1024
+MAX_CONVERSION_LINEAGE_MESSAGE_IDS = 128
+MAX_CONVERSION_CANONICAL_BYTES = 256 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class ConversionBinding:
+    manifest_filename: str
+    manifest_bytes: bytes
+    manifest_sha256: str
+    lineage_filename: str
+    lineage_bytes: bytes
+    lineage_sha256: str
+    lineage_tree_ids: frozenset[str]
+    record_count: int
+    split_counts: Mapping[str, int]
+    profile: str
+    raw_source: Mapping[str, Any]
+    converter: Mapping[str, Any]
 
 
 class _DuplicateJsonField(ValueError):
@@ -67,6 +102,476 @@ def _load_source_json(line: str, line_number: int) -> Any:
         raise ContractError(
             f"invalid JSON on input line {line_number}: {error}"
         ) from error
+
+
+def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _bounded_regular_bytes(path: Path, maximum_bytes: int, label: str) -> bytes:
+    if maximum_bytes <= 0:
+        raise AssertionError("internal byte limit must be positive")
+    path = path.absolute()
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise ContractError(f"{label} could not be securely opened: {error}") from error
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_size <= 0
+            or before.st_size > maximum_bytes
+        ):
+            raise ContractError(
+                f"{label} must be a nonempty regular file no larger than {maximum_bytes} bytes"
+            )
+        data = bytearray()
+        while len(data) <= maximum_bytes:
+            block = os.read(descriptor, min(1024 * 1024, maximum_bytes + 1 - len(data)))
+            if not block:
+                break
+            data.extend(block)
+        after = os.fstat(descriptor)
+        try:
+            path_state = os.stat(path, follow_symlinks=False)
+        except OSError as error:
+            raise ContractError(f"{label} changed while it was read") from error
+        if (
+            len(data) != before.st_size
+            or len(data) > maximum_bytes
+            or _file_identity(after) != _file_identity(before)
+            or _file_identity(path_state) != _file_identity(before)
+            or not stat.S_ISREG(path_state.st_mode)
+        ):
+            raise ContractError(f"{label} changed while it was read")
+        return bytes(data)
+    finally:
+        os.close(descriptor)
+
+
+def _strict_canonical_json(data: bytes, label: str) -> Mapping[str, Any]:
+    try:
+        text = data.decode("utf-8", errors="strict")
+        value = json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate_fields,
+            parse_constant=_reject_nonstandard_constant,
+        )
+    except (
+        UnicodeError,
+        json.JSONDecodeError,
+        _DuplicateJsonField,
+        ValueError,
+    ) as error:
+        raise ContractError(f"{label} is not strict UTF-8 JSON: {error}") from error
+    if not isinstance(value, Mapping):
+        raise ContractError(f"{label} must contain one JSON object")
+    canonical = (
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+    if data != canonical:
+        raise ContractError(f"{label} is not canonical compact JSON with one LF")
+    return value
+
+
+def _canonical_uuid(value: Any, label: str) -> str:
+    if not isinstance(value, str):
+        raise ContractError(f"{label} must be a canonical lowercase UUID")
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError) as error:
+        raise ContractError(f"{label} must be a canonical lowercase UUID") from error
+    if str(parsed) != value:
+        raise ContractError(f"{label} must be a canonical lowercase UUID")
+    return value
+
+
+def _validate_lineage_bytes(data: bytes, expected_record_count: int) -> frozenset[str]:
+    stream = io.BytesIO(data)
+    tree_ids: set[str] = set()
+    all_message_ids: set[str] = set()
+    record_count = 0
+    while True:
+        line = stream.readline(MAX_CONVERSION_LINEAGE_LINE_BYTES + 1)
+        if not line:
+            break
+        record_count += 1
+        if len(line) > MAX_CONVERSION_LINEAGE_LINE_BYTES or not line.endswith(b"\n"):
+            raise ContractError(
+                f"conversion lineage line {record_count} is overlong or not LF-terminated"
+            )
+        record = _strict_canonical_json(line, f"conversion lineage line {record_count}")
+        if set(record) != {"tree_id", "message_ids"}:
+            raise ContractError(
+                f"conversion lineage line {record_count} has unexpected fields"
+            )
+        tree_id = _canonical_uuid(
+            record["tree_id"], f"conversion lineage line {record_count} tree_id"
+        )
+        raw_message_ids = record["message_ids"]
+        if (
+            not isinstance(raw_message_ids, list)
+            or not raw_message_ids
+            or len(raw_message_ids) > MAX_CONVERSION_LINEAGE_MESSAGE_IDS
+        ):
+            raise ContractError(
+                f"conversion lineage line {record_count} message_ids is invalid"
+            )
+        message_ids = [
+            _canonical_uuid(
+                value,
+                f"conversion lineage line {record_count} message_ids[{index}]",
+            )
+            for index, value in enumerate(raw_message_ids)
+        ]
+        if tree_id != message_ids[0]:
+            raise ContractError(
+                f"conversion lineage line {record_count} must begin with tree_id"
+            )
+        if tree_id in tree_ids:
+            raise ContractError(f"duplicate conversion lineage tree_id: {tree_id}")
+        if len(set(message_ids)) != len(message_ids) or any(
+            message_id in all_message_ids for message_id in message_ids
+        ):
+            raise ContractError(
+                f"conversion lineage line {record_count} repeats a message UUID"
+            )
+        tree_ids.add(tree_id)
+        all_message_ids.update(message_ids)
+        if record_count > expected_record_count:
+            raise ContractError("conversion lineage has more records than declared")
+    if record_count != expected_record_count:
+        raise ContractError(
+            "conversion lineage record count does not match its manifest"
+        )
+    return frozenset(tree_ids)
+
+
+def _exact_mapping(value: Any, fields: set[str], label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise ContractError(f"{label} has unexpected fields")
+    return value
+
+
+def _plain_filename(value: Any, label: str) -> str:
+    filename = _provenance_value(value, label)
+    if Path(filename).name != filename:
+        raise ContractError(f"{label} must be a plain filename")
+    return filename
+
+
+def _size(value: Any, label: str, *, allow_zero: bool = False) -> int:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < (0 if allow_zero else 1)
+    ):
+        raise ContractError(f"{label} is invalid")
+    return value
+
+
+def _hash_record(value: Any, fields: set[str], label: str) -> Mapping[str, Any]:
+    record = _exact_mapping(value, fields, label)
+    _plain_filename(record["path"], f"{label}.path")
+    _size(record["size_bytes"], f"{label}.size_bytes")
+    require_sha256(record["sha256"], f"{label}.sha256")
+    return record
+
+
+def _validate_raw_source(value: Any) -> Mapping[str, Any]:
+    source = _exact_mapping(
+        value,
+        {
+            "filename",
+            "source_uri",
+            "version",
+            "license",
+            "license_reviewed",
+            "policy_reviewed",
+            "compression",
+            "compressed",
+            "decompressed",
+        },
+        "conversion manifest source",
+    )
+    _plain_filename(source["filename"], "conversion source filename")
+    raw_uri = _source_uri(source["source_uri"])
+    parsed_raw_uri = urlsplit(raw_uri)
+    if parsed_raw_uri.scheme.casefold() == "file":
+        raise ContractError("conversion raw source URI must not be a file URI")
+    if (
+        parsed_raw_uri.scheme.casefold() in ("http", "https")
+        and not parsed_raw_uri.netloc
+    ):
+        raise ContractError("conversion HTTP source URI must include an authority")
+    require_revision(source["version"])
+    _provenance_value(source["license"], "conversion source license")
+    if source["license_reviewed"] is not True or source["policy_reviewed"] is not True:
+        raise ContractError("conversion source review attestations are incomplete")
+    if source["compression"] != "gzip":
+        raise ContractError("conversion source compression must be gzip")
+    for name in ("compressed", "decompressed"):
+        record = _exact_mapping(
+            source[name], {"sha256", "size_bytes"}, f"conversion source {name}"
+        )
+        require_sha256(record["sha256"], f"conversion source {name} SHA-256")
+        _size(record["size_bytes"], f"conversion source {name} size")
+    return source
+
+
+def _validate_converter(value: Any) -> Mapping[str, Any]:
+    converter = _exact_mapping(
+        value,
+        {"filename", "version", "sha256", "size_bytes"},
+        "conversion manifest converter",
+    )
+    _plain_filename(converter["filename"], "converter filename")
+    _provenance_value(converter["version"], "converter version")
+    require_sha256(converter["sha256"], "converter SHA-256")
+    _size(converter["size_bytes"], "converter size_bytes")
+    return converter
+
+
+def load_conversion_binding(
+    conversion_manifest_path: Path,
+    *,
+    canonical_filename: str,
+    canonical_size_bytes: int,
+    canonical_sha256: str,
+    model_id: str,
+    revision: str,
+    tokenizer_fingerprint: str,
+    lineage_path_override: Path | None = None,
+    expected_record_ids: Collection[str] | None = None,
+) -> ConversionBinding:
+    """Verify and retain the exact converter artifacts that bind a dataset."""
+
+    manifest_bytes = _bounded_regular_bytes(
+        conversion_manifest_path,
+        MAX_CONVERSION_MANIFEST_BYTES,
+        "conversion manifest",
+    )
+    document = _strict_canonical_json(manifest_bytes, "conversion manifest")
+    expected_top_level = {
+        "schema_version",
+        "kind",
+        "status",
+        "canonical_serialization",
+        "converter",
+        "source",
+        "output",
+        "lineage",
+        "tokenizer",
+        "counts",
+        "filter_reasons",
+        "policy",
+        "split",
+    }
+    if set(document) != expected_top_level:
+        raise ContractError("conversion manifest has unexpected top-level fields")
+    if (
+        document["schema_version"] != CONVERSION_MANIFEST_SCHEMA_VERSION
+        or isinstance(document["schema_version"], bool)
+        or document["kind"] != CONVERSION_MANIFEST_KIND
+        or document["status"] != "completed"
+        or document["canonical_serialization"] != CONVERSION_CANONICAL_SERIALIZATION
+    ):
+        raise ContractError("conversion manifest schema/kind/status is unsupported")
+
+    output = _hash_record(
+        document["output"],
+        {
+            "path",
+            "sha256",
+            "size_bytes",
+            "record_count",
+            "message_count",
+            "content_bytes",
+            "fields",
+        },
+        "conversion manifest output",
+    )
+    if (
+        output["path"] != canonical_filename
+        or output["size_bytes"] != canonical_size_bytes
+        or output["sha256"] != canonical_sha256
+        or output["fields"] != ["id", "messages"]
+    ):
+        raise ContractError(
+            "conversion manifest output does not match the exact canonical input"
+        )
+    record_count = _size(output["record_count"], "conversion output record_count")
+    _size(output["message_count"], "conversion output message_count")
+    _size(output["content_bytes"], "conversion output content_bytes")
+
+    tokenizer = _exact_mapping(
+        document["tokenizer"],
+        {
+            "model_id",
+            "revision",
+            "fingerprint_sha256",
+            "template",
+            "maximum_input_tokens",
+            "selected_maximum_token_count",
+        },
+        "conversion manifest tokenizer",
+    )
+    if (
+        tokenizer["model_id"],
+        tokenizer["revision"],
+        tokenizer["fingerprint_sha256"],
+    ) != (model_id, revision, tokenizer_fingerprint):
+        raise ContractError("conversion manifest tokenizer identity mismatch")
+    if tokenizer["template"] != {
+        "add_generation_prompt": False,
+        "enable_thinking": True,
+    }:
+        raise ContractError("conversion manifest tokenizer template mismatch")
+    maximum_tokens = _size(
+        tokenizer["maximum_input_tokens"], "conversion tokenizer maximum_input_tokens"
+    )
+    selected_tokens = _size(
+        tokenizer["selected_maximum_token_count"],
+        "conversion tokenizer selected_maximum_token_count",
+    )
+    if selected_tokens > maximum_tokens:
+        raise ContractError(
+            "conversion tokenizer selected token maximum is inconsistent"
+        )
+
+    lineage = _hash_record(
+        document["lineage"],
+        {
+            "path",
+            "sha256",
+            "size_bytes",
+            "record_count",
+            "fields",
+            "contains_user_ids_or_text",
+        },
+        "conversion manifest lineage",
+    )
+    lineage_filename = lineage["path"]
+    if (
+        lineage["record_count"] != record_count
+        or lineage["fields"] != ["tree_id", "message_ids"]
+        or lineage["contains_user_ids_or_text"] is not False
+    ):
+        raise ContractError("conversion manifest lineage contract mismatch")
+    selected_lineage_path = lineage_path_override or (
+        conversion_manifest_path.absolute().parent / lineage_filename
+    )
+    lineage_bytes = _bounded_regular_bytes(
+        selected_lineage_path,
+        MAX_CONVERSION_LINEAGE_BYTES,
+        "conversion lineage",
+    )
+    lineage_sha256 = hashlib.sha256(lineage_bytes).hexdigest()
+    if (
+        len(lineage_bytes) != lineage["size_bytes"]
+        or lineage_sha256 != lineage["sha256"]
+    ):
+        raise ContractError("conversion lineage content hash/size mismatch")
+    lineage_tree_ids = _validate_lineage_bytes(lineage_bytes, record_count)
+    if expected_record_ids is not None and lineage_tree_ids != frozenset(
+        expected_record_ids
+    ):
+        raise ContractError(
+            "conversion lineage tree IDs do not match the canonical conversations"
+        )
+
+    policy = document["policy"]
+    if not isinstance(policy, Mapping):
+        raise ContractError("conversion manifest policy is missing")
+    profile = _provenance_value(policy.get("profile"), "conversion profile")
+    if profile not in CONVERSION_PROFILES:
+        raise ContractError("conversion manifest profile is unsupported")
+    conservative = policy.get("conservative_zero")
+    quality = policy.get("quality05")
+    if (
+        not isinstance(conservative, Mapping)
+        or not isinstance(quality, Mapping)
+        or conservative.get("active") is not (profile == "conservative-zero")
+        or quality.get("active") is not (profile == "quality05")
+    ):
+        raise ContractError("conversion manifest profile active flags are inconsistent")
+    raw_source = _validate_raw_source(document["source"])
+    converter = _validate_converter(document["converter"])
+    if not isinstance(document["counts"], Mapping) or not isinstance(
+        document["filter_reasons"], Mapping
+    ):
+        raise ContractError("conversion manifest audit counters are missing")
+    split = _exact_mapping(
+        document["split"],
+        {
+            "algorithm",
+            "seed",
+            "bucket_count",
+            "test_buckets_inclusive",
+            "validation_buckets_inclusive",
+            "train_buckets_inclusive",
+            "record_counts",
+        },
+        "conversion manifest split",
+    )
+    if (
+        split["algorithm"],
+        split["seed"],
+        split["bucket_count"],
+        split["test_buckets_inclusive"],
+        split["validation_buckets_inclusive"],
+        split["train_buckets_inclusive"],
+    ) != (
+        SPLIT_ALGORITHM,
+        SPLIT_SEED,
+        SPLIT_BUCKET_COUNT,
+        [0, 999],
+        [1000, 1999],
+        [2000, 9999],
+    ):
+        raise ContractError("conversion manifest split contract mismatch")
+    split_counts_record = _exact_mapping(
+        split["record_counts"],
+        {"train", "validation", "test"},
+        "conversion split counts",
+    )
+    split_counts = {
+        name: _size(
+            split_counts_record[name], f"conversion {name} count", allow_zero=True
+        )
+        for name in ("train", "validation", "test")
+    }
+    if sum(split_counts.values()) != record_count:
+        raise ContractError("conversion manifest split counts do not sum to output")
+    return ConversionBinding(
+        manifest_filename=conversion_manifest_path.name,
+        manifest_bytes=manifest_bytes,
+        manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+        lineage_filename=lineage_filename,
+        lineage_bytes=lineage_bytes,
+        lineage_sha256=lineage_sha256,
+        lineage_tree_ids=lineage_tree_ids,
+        record_count=record_count,
+        split_counts=split_counts,
+        profile=profile,
+        raw_source=raw_source,
+        converter=converter,
+    )
 
 
 def _positive_limit(value: int, label: str) -> int:
@@ -210,6 +715,69 @@ def _messages(
             )
         expected = "assistant" if expected == "user" else "user"
     return result
+
+
+def load_canonical_conversation_ids(
+    path: Path,
+    *,
+    expected_size_bytes: int,
+    expected_sha256: str,
+    expected_record_count: int,
+) -> frozenset[str]:
+    """Validate a converter-v1 canonical JSONL and return its conversation IDs."""
+
+    data = _bounded_regular_bytes(
+        path, MAX_CONVERSION_CANONICAL_BYTES, "canonical conversation source"
+    )
+    if (
+        len(data) != expected_size_bytes
+        or hashlib.sha256(data).hexdigest() != expected_sha256
+    ):
+        raise ContractError("canonical conversation source hash/size mismatch")
+    identifiers: set[str] = set()
+    stream = io.BytesIO(data)
+    line_number = 0
+    while True:
+        line = stream.readline(MAX_SOURCE_LINE_BYTES_DEFAULT + 1)
+        if not line:
+            break
+        line_number += 1
+        if len(line) > MAX_SOURCE_LINE_BYTES_DEFAULT or not line.endswith(b"\n"):
+            raise ContractError(
+                f"canonical conversation line {line_number} is overlong or not LF-terminated"
+            )
+        value = _strict_canonical_json(
+            line, f"canonical conversation line {line_number}"
+        )
+        if set(value) != {"id", "messages"}:
+            raise ContractError(
+                f"canonical conversation line {line_number} has unexpected fields"
+            )
+        identifier = _canonical_uuid(
+            value["id"], f"canonical conversation line {line_number} id"
+        )
+        _messages(
+            value["messages"],
+            identifier,
+            maximum_messages_per_conversation=(
+                MAX_SOURCE_MESSAGES_PER_CONVERSATION_DEFAULT
+            ),
+            maximum_content_bytes_per_message=(
+                MAX_SOURCE_CONTENT_BYTES_PER_MESSAGE_DEFAULT
+            ),
+        )
+        if identifier in identifiers:
+            raise ContractError(f"duplicate canonical conversation id: {identifier}")
+        identifiers.add(identifier)
+        if line_number > expected_record_count:
+            raise ContractError(
+                "canonical conversation source has more records than declared"
+            )
+    if line_number != expected_record_count:
+        raise ContractError(
+            "canonical conversation source record count does not match its manifest"
+        )
+    return frozenset(identifiers)
 
 
 def _common_prefix_length(left: Sequence[int], right: Sequence[int]) -> int:
@@ -451,6 +1019,14 @@ def _write_jsonl(path: Path, records: Sequence[Mapping[str, Any]]) -> None:
         os.fsync(stream.fileno())
 
 
+def _write_immutable_bytes(path: Path, data: bytes) -> None:
+    with path.open("xb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(path, 0o444)
+
+
 def _provenance_value(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ContractError(f"{label} must be a non-empty, trimmed string")
@@ -510,6 +1086,7 @@ def write_dataset(
     model_id: str,
     revision: str,
     tokenizer_fingerprint: str,
+    conversion_manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     source_uri = _source_uri(source_uri)
     source_version = _source_version(source_version)
@@ -525,6 +1102,69 @@ def write_dataset(
         or any(character not in "0123456789abcdef" for character in source_sha256)
     ):
         raise ContractError("consumed source size/SHA-256 provenance is invalid")
+    if (
+        source_path.stat().st_size != source_size_bytes
+        or sha256_file(source_path) != source_sha256
+    ):
+        raise ContractError("source changed after it was read for tokenization")
+    binding: ConversionBinding | None = None
+    if conversion_manifest_path is not None:
+        if conversion_manifest_path.name != "conversion-manifest.json":
+            raise ContractError(
+                "conversion manifest must use canonical filename conversion-manifest.json"
+            )
+        prepared_record_ids: set[str] = set()
+        prepared_record_count = 0
+        for name in ("train", "validation", "test"):
+            for record in records[name]:
+                identifier = record.get("id")
+                if not isinstance(identifier, str) or not identifier:
+                    raise ContractError("prepared record id is invalid")
+                prepared_record_count += 1
+                if identifier in prepared_record_ids:
+                    raise ContractError(
+                        f"duplicate prepared id across shards: {identifier}"
+                    )
+                prepared_record_ids.add(identifier)
+        binding = load_conversion_binding(
+            conversion_manifest_path,
+            canonical_filename=source_path.name,
+            canonical_size_bytes=source_size_bytes,
+            canonical_sha256=source_sha256,
+            model_id=model_id,
+            revision=revision,
+            tokenizer_fingerprint=tokenizer_fingerprint,
+            expected_record_ids=prepared_record_ids,
+        )
+        if binding.lineage_filename != "lineage.jsonl":
+            raise ContractError(
+                "conversion manifest must declare canonical sibling lineage.jsonl"
+            )
+        actual_split_counts = {
+            name: len(records[name]) for name in ("train", "validation", "test")
+        }
+        if (
+            binding.record_count != prepared_record_count
+            or binding.record_count != sum(actual_split_counts.values())
+            or dict(binding.split_counts) != actual_split_counts
+        ):
+            raise ContractError(
+                "conversion manifest record/split counts do not match prepared records"
+            )
+        expected_canonical_uri = f"urn:sha256:{source_sha256}"
+        expected_canonical_version = f"sha256:{source_sha256}"
+        if source_uri != expected_canonical_uri:
+            raise ContractError(
+                "derived source_uri must equal urn:sha256:<canonical input SHA-256>"
+            )
+        if source_version != expected_canonical_version:
+            raise ContractError(
+                "derived source_version must equal sha256:<canonical input SHA-256>"
+            )
+        if source_license != binding.raw_source["license"]:
+            raise ContractError(
+                "derived source_license must equal the conversion raw source license"
+            )
     output_dir = output_dir.resolve()
     if output_dir.exists():
         raise ContractError(
@@ -586,6 +1226,47 @@ def write_dataset(
             },
             "shards": shard_manifest,
         }
+        if binding is not None:
+            _write_immutable_bytes(
+                temporary / PREPARED_CONVERSION_MANIFEST_FILENAME,
+                binding.manifest_bytes,
+            )
+            _write_immutable_bytes(
+                temporary / PREPARED_LINEAGE_FILENAME,
+                binding.lineage_bytes,
+            )
+            if (
+                sha256_file(temporary / PREPARED_CONVERSION_MANIFEST_FILENAME)
+                != binding.manifest_sha256
+                or sha256_file(temporary / PREPARED_LINEAGE_FILENAME)
+                != binding.lineage_sha256
+            ):
+                raise ContractError("copied conversion derivation hash mismatch")
+            manifest["derivation"] = {
+                "schema_version": DERIVATION_SCHEMA_VERSION,
+                "kind": DERIVATION_KIND,
+                "profile": binding.profile,
+                "canonical_input": {
+                    "filename": source_path.name,
+                    "size_bytes": source_size_bytes,
+                    "sha256": source_sha256,
+                },
+                "conversion_manifest": {
+                    "path": PREPARED_CONVERSION_MANIFEST_FILENAME,
+                    "source_filename": binding.manifest_filename,
+                    "size_bytes": len(binding.manifest_bytes),
+                    "sha256": binding.manifest_sha256,
+                },
+                "lineage": {
+                    "path": PREPARED_LINEAGE_FILENAME,
+                    "source_filename": binding.lineage_filename,
+                    "size_bytes": len(binding.lineage_bytes),
+                    "sha256": binding.lineage_sha256,
+                    "record_count": binding.record_count,
+                },
+                "raw_source": dict(binding.raw_source),
+                "converter": dict(binding.converter),
+            }
         write_json_atomic(temporary / "dataset-manifest.json", manifest)
         temporary.replace(output_dir)
         return manifest
@@ -608,6 +1289,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-uri", required=True)
     parser.add_argument("--source-version", required=True)
     parser.add_argument("--source-license", required=True)
+    parser.add_argument("--conversion-manifest", type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument(
         "--max-input-tokens", type=int, default=MAX_INPUT_TOKENS_DEFAULT
@@ -657,6 +1339,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             model_id=assets.model_id,
             revision=assets.revision,
             tokenizer_fingerprint=assets.tokenizer_fingerprint,
+            conversion_manifest_path=arguments.conversion_manifest,
         )
     except (ContractError, OSError, UnicodeError, ValueError) as error:
         print(f"chatbot_prepare: {error}", file=sys.stderr)

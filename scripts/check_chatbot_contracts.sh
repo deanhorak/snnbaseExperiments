@@ -6,9 +6,10 @@ usage() {
 Usage: check_chatbot_contracts.sh [all|python|cpp]
 
 Runs the chatbot contracts without downloading dependencies or model assets.
-The Python checks use only the standard library. The C++ checks compile the
-conversation, dataset, and manifest sources directly, without snnbase or
-LibTorch.
+The Python checks cover the OASST2 converter, tokenizer/data frontends, and
+training/publication orchestration; real model assets remain opt-in. The C++
+checks compile the conversation, dataset, and manifest sources directly,
+without snnbase or LibTorch.
 EOF
   exit 2
 }

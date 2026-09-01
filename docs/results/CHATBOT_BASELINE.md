@@ -14,8 +14,8 @@ quality.
 |---|---|---|---|
 | Exact Qwen ANN import | Converter, 310-tensor loader, ANN bypass, bounded `inspect`, and oracle gate implemented | Local ignored three-case CPU float32 oracle passed exact probe IDs and ordered top-16 IDs; max abs `9.5367431640625e-06`, max rel `8.471997478955767e-06`, `atol=rtol=1e-5` | No promoted gate artifact, training, held-out quality, or efficiency result |
 | Exact-dense hybrid SNN | Same Qwen dense archive can initialize SNN mode; 112 runtime LIF threshold/leak parameters are outside the Qwen checkpoint | Mapping/load contract and tests exist; ANN oracle is a prerequisite only | Not calibrated, trained, or evaluated; no parity or energy claim |
-| Compact ANN | Prepare/train/validation-selection/reload/test plumbing implemented | Fixture/fake-core tests and tiny runner smoke | No approved dataset or full run; quality unavailable |
-| Compact hybrid SNN | Independently trainable compact SNN path implemented | Fixture/fake-core tests and tiny runner smoke | No approved dataset or full run; ANN-to-SNN checkpoint transplant not implemented; quality unavailable |
+| Compact ANN | Prepare/train/validation-selection/reload/test plumbing implemented | Fixture/fake-core tests, tiny runner smoke, and an ignored pinned-OASST2 conversion | Development candidate only; no full run or held-out quality result |
+| Compact hybrid SNN | Independently trainable compact SNN path implemented | Fixture/fake-core tests, tiny runner smoke, and the same candidate-data contract | Development candidate only; no full run; ANN-to-SNN checkpoint transplant not implemented; quality unavailable |
 
 A local ignored three-conversation CPU SNN wiring run also completed the real
 prepare, train, partial-accumulation flush, validation selection, fresh-process
@@ -30,6 +30,26 @@ The exact archive is 1,192,143,104 bytes with SHA-256
 It contains 1,192,099,840 bytes across 310 BF16 dense tensors. The source
 `model.safetensors` SHA-256 is
 `cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba`.
+
+## Local candidate-data evidence
+
+The ignored OASST2 development conversion used source revision
+`179dd21fc55192153d94adb0e0ce8f69e222bf75`, compressed SHA-256
+`7a886a16ccfc1173c4f00a6897523e3c95b2785a86ee44a18a98f4f2807ee29b`,
+and the declared Apache-2.0 license. The exact Qwen-token-aware `quality05`
+profile emitted 12,427 records: 9,990 train, 1,165 validation, and 1,272 test.
+All selected paths fit the 512-token limit without truncation. Normalized-root
+deduplication removed 96 otherwise eligible records; fuzzy and semantic
+near-duplicates have not yet been excluded.
+
+The canonical conversations SHA-256 is
+`64c0fb332808ded357e6702b9639b284a0dd9393fa5014f17d69fa88f719a4e5`;
+the text-free lineage SHA-256 is
+`2142c4e246075a3c3eab28f217cd693e14e69c3bb21d29ef95c3a7970ffa90bb`.
+This is reproducibility and data-contract evidence only. The profile permits
+missing human labels and is not a safety certification; the dataset license
+declaration is not project-specific legal approval. Raw and derived data stay
+outside Git.
 
 ## Local oracle evidence
 
@@ -83,9 +103,10 @@ compact ANN and SNN checkpoints are not currently interchangeable.
 
 ## Gates before reportable training results
 
-1. Select and document a legally usable conversation dataset, immutable
-   source/version, license, filtering, policy review, and SHA-256.
-2. Complete leakage and near-duplicate analysis before freezing IDs/splits.
+1. Complete owner/legal and policy approval of the pinned OASST2 candidate and
+   retain the conversion/preparation provenance bundle.
+2. Complete fuzzy and semantic near-duplicate analysis before promoting the
+   already exact-normalized-deduplicated IDs/splits.
 3. Publish and pin a clean language-enabled `snnbase` revision and execute the
    LibTorch chatbot CI smoke on a deterministic dependency stack.
 4. Retain the fully resolved tokenizer/reference environment and hashes for

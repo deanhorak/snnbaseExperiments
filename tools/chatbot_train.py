@@ -21,12 +21,17 @@ from chatbot_config import load_config
 from chatbot_prepare import (
     DATASET_KIND,
     DATASET_SCHEMA_VERSION,
+    DERIVATION_KIND,
+    DERIVATION_SCHEMA_VERSION,
     MAX_PROVENANCE_FIELD_BYTES,
     MAX_SOURCE_ID_BYTES_DEFAULT,
+    PREPARED_CONVERSION_MANIFEST_FILENAME,
+    PREPARED_LINEAGE_FILENAME,
     SPLIT_ALGORITHM,
     SPLIT_BUCKET_COUNT,
     SPLIT_SEED,
     bounded_binary_lines,
+    load_conversion_binding,
     split_name,
 )
 from chatbot_token_protocol import MAX_LINE_BYTES_DEFAULT, PROTOCOL
@@ -232,11 +237,144 @@ def _validate_source_provenance(value: Any) -> None:
     _provenance_text(value["license"], "license")
 
 
+def _derivation_artifact(
+    value: Any, fields: set[str], expected_path: str, label: str
+) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise ContractError(f"dataset derivation {label} has unexpected fields")
+    if value["path"] != expected_path:
+        raise ContractError(f"dataset derivation {label} path is noncanonical")
+    size_bytes = value["size_bytes"]
+    if (
+        not isinstance(size_bytes, int)
+        or isinstance(size_bytes, bool)
+        or size_bytes <= 0
+    ):
+        raise ContractError(f"dataset derivation {label} size_bytes is invalid")
+    require_sha256(value["sha256"], f"dataset derivation {label} SHA-256")
+    source_filename = _provenance_text(value["source_filename"], "source filename")
+    if Path(source_filename).name != source_filename:
+        raise ContractError(f"dataset derivation {label} source_filename must be plain")
+    return value
+
+
+def validate_dataset_derivation(
+    root: Path,
+    value: Any,
+    source: Mapping[str, Any],
+    tokenizer: Mapping[str, Any],
+    shard_manifest: Any,
+) -> frozenset[str]:
+    expected_fields = {
+        "schema_version",
+        "kind",
+        "profile",
+        "canonical_input",
+        "conversion_manifest",
+        "lineage",
+        "raw_source",
+        "converter",
+    }
+    if not isinstance(value, Mapping) or set(value) != expected_fields:
+        raise ContractError("dataset derivation has unexpected fields")
+    if (
+        value["schema_version"] != DERIVATION_SCHEMA_VERSION
+        or isinstance(value["schema_version"], bool)
+        or value["kind"] != DERIVATION_KIND
+    ):
+        raise ContractError("dataset derivation schema/kind mismatch")
+    profile = _provenance_text(value["profile"], "derivation profile")
+    canonical = value["canonical_input"]
+    if not isinstance(canonical, Mapping) or set(canonical) != {
+        "filename",
+        "size_bytes",
+        "sha256",
+    }:
+        raise ContractError("dataset derivation canonical_input has unexpected fields")
+    if canonical != {
+        "filename": source["filename"],
+        "size_bytes": source["size_bytes"],
+        "sha256": source["sha256"],
+    }:
+        raise ContractError("dataset derivation canonical input mismatch")
+
+    conversion = _derivation_artifact(
+        value["conversion_manifest"],
+        {"path", "source_filename", "size_bytes", "sha256"},
+        PREPARED_CONVERSION_MANIFEST_FILENAME,
+        "conversion manifest",
+    )
+    lineage = _derivation_artifact(
+        value["lineage"],
+        {"path", "source_filename", "size_bytes", "sha256", "record_count"},
+        PREPARED_LINEAGE_FILENAME,
+        "lineage",
+    )
+    if conversion["source_filename"] != "conversion-manifest.json":
+        raise ContractError("dataset derivation conversion source filename mismatch")
+    if lineage["source_filename"] != "lineage.jsonl":
+        raise ContractError("dataset derivation lineage source filename mismatch")
+    if (
+        not isinstance(lineage["record_count"], int)
+        or isinstance(lineage["record_count"], bool)
+        or lineage["record_count"] <= 0
+    ):
+        raise ContractError("dataset derivation lineage record_count is invalid")
+
+    expected_uri = f"urn:sha256:{source['sha256']}"
+    expected_version = f"sha256:{source['sha256']}"
+    if source["source_uri"] != expected_uri or source["version"] != expected_version:
+        raise ContractError("derived dataset canonical source provenance mismatch")
+    conversion_path = _regular_child(root, PREPARED_CONVERSION_MANIFEST_FILENAME)
+    lineage_path = _regular_child(root, PREPARED_LINEAGE_FILENAME)
+    binding = load_conversion_binding(
+        conversion_path,
+        canonical_filename=source["filename"],
+        canonical_size_bytes=source["size_bytes"],
+        canonical_sha256=source["sha256"],
+        model_id=tokenizer["model_id"],
+        revision=tokenizer["revision"],
+        tokenizer_fingerprint=tokenizer["fingerprint_sha256"],
+        lineage_path_override=lineage_path,
+    )
+    if (
+        conversion_path.stat().st_size != conversion["size_bytes"]
+        or binding.manifest_sha256 != conversion["sha256"]
+        or lineage_path.stat().st_size != lineage["size_bytes"]
+        or binding.lineage_sha256 != lineage["sha256"]
+        or binding.record_count != lineage["record_count"]
+        or binding.profile != profile
+        or binding.raw_source != value["raw_source"]
+        or binding.converter != value["converter"]
+        or source["license"] != binding.raw_source["license"]
+    ):
+        raise ContractError("dataset derivation content/provenance mismatch")
+    if not isinstance(shard_manifest, Mapping) or set(shard_manifest) != set(
+        SHARD_NAMES
+    ):
+        raise ContractError("derived dataset shard manifest is malformed")
+    declared_split_counts: dict[str, int] = {}
+    for name in SHARD_NAMES:
+        shard = shard_manifest[name]
+        if not isinstance(shard, Mapping):
+            raise ContractError("derived dataset shard manifest is malformed")
+        count = shard.get("record_count")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise ContractError("derived dataset shard record_count is invalid")
+        declared_split_counts[name] = count
+    if (
+        declared_split_counts != dict(binding.split_counts)
+        or sum(declared_split_counts.values()) != binding.record_count
+    ):
+        raise ContractError("dataset derivation split counts mismatch")
+    return binding.lineage_tree_ids
+
+
 def load_prepared_dataset(root: Path) -> PreparedDataset:
     root = root.resolve(strict=True)
     manifest_path = _regular_child(root, "dataset-manifest.json")
     manifest = load_json(manifest_path)
-    if not isinstance(manifest, Mapping) or set(manifest) != {
+    required_manifest_fields = {
         "schema_version",
         "kind",
         "token_protocol",
@@ -244,7 +382,11 @@ def load_prepared_dataset(root: Path) -> PreparedDataset:
         "tokenizer",
         "split",
         "shards",
-    }:
+    }
+    if not isinstance(manifest, Mapping) or set(manifest) not in (
+        required_manifest_fields,
+        required_manifest_fields | {"derivation"},
+    ):
         raise ContractError("dataset manifest has unexpected top-level fields")
     if (
         not isinstance(manifest["schema_version"], int)
@@ -304,6 +446,15 @@ def load_prepared_dataset(root: Path) -> PreparedDataset:
         )
     ):
         raise ContractError("dataset tokenizer does not match the Phase 0 pin")
+    lineage_tree_ids: frozenset[str] | None = None
+    if "derivation" in manifest:
+        lineage_tree_ids = validate_dataset_derivation(
+            root,
+            manifest["derivation"],
+            manifest["source"],
+            tokenizer,
+            manifest["shards"],
+        )
     shard_manifest = manifest["shards"]
     if not isinstance(shard_manifest, Mapping) or set(shard_manifest) != set(
         SHARD_NAMES
@@ -367,6 +518,10 @@ def load_prepared_dataset(root: Path) -> PreparedDataset:
                 )
             seen.add(item.identifier)
         shards[name] = records
+    if lineage_tree_ids is not None and lineage_tree_ids != seen:
+        raise ContractError(
+            "dataset conversion lineage tree IDs do not match prepared shard IDs"
+        )
     return PreparedDataset(root, manifest, sha256_file(manifest_path), shards)
 
 

@@ -114,7 +114,9 @@ validation, assistant-only labels, the cross-language
 SHA-256, the bounded persistent token protocol, a fail-closed run schema,
 immutable Qwen pins and reference fixtures, Qwen inventory/conversion/import,
 bounded `inspect`, the oracle gate, the LibTorch runner/checkpoint API, the
-interactive official-template client, and offline contract/smoke tests.
+interactive official-template client, the bounded/token-aware OASST2 tree
+converter with normalized-root deduplication and text-free lineage, and offline
+contract/smoke tests.
 
 The training driver now flushes at epoch boundaries, considers epoch-zero
 validation, selects only on lowest validation loss, reloads the selected
@@ -145,6 +147,26 @@ PyTorch/LibTorch 2.7.1+cpu installation under the conversion environment, with
 its matching Torch `LD_LIBRARY_PATH`; it was not the older 2.3 dependency
 matrix.
 
+The pinned OASST2 revision
+`179dd21fc55192153d94adb0e0ce8f69e222bf75` is now a selected development
+candidate. A full ignored `quality05` conversion validated all 13,854 trees and
+135,174 messages, then retained 12,427 exact-Qwen-compatible conversations:
+9,990 train, 1,165 validation, and 1,272 test. All paths are at most 512 tokens
+without truncation. Exact normalized-root-prompt deduplication removed 96
+records; the canonical output SHA-256 is
+`64c0fb332808ded357e6702b9639b284a0dd9393fa5014f17d69fa88f719a4e5`.
+The raw/converted files remain ignored local artifacts. The conversion profile
+is reproducible but not a universal safety filter, and fuzzy/semantic
+near-duplicate review is still outstanding.
+
+The same canonical output completed the real preparation path in 60.08 seconds
+with 286,428 KiB peak RSS. The prepared dataset manifest SHA-256 is
+`88f2298888c0bfb426dc4de84ad1dc89757de380d5773ab7d7d552a9396d416b`;
+its 9,990/1,165/1,272 record shards were then reloaded and revalidated by the
+training driver. The prepared manifest also hash-binds retained copies of the
+conversion manifest and text-free lineage. This is data-contract evidence, not
+a training or quality result.
+
 The language backend is committed and published at the clean `snnbase` revision
 `c282306ee3b80ccc5123fcb8b2da78ae51ed09fe`. Its decoder and installed-package
 consumer tests passed with LibTorch 2.3.0 and 2.5.1, and the experiment
@@ -155,12 +177,14 @@ model-quality evidence. The existing general non-Torch CI job remains pinned to
 `37abded48777968f112fcd5c66d357d0352d9ff2`; the explicit local
 configure/smoke scripts provide the corresponding reproducible local path.
 
-No conversation dataset has been selected or approved, so no reportable ANN or
-SNN training result, held-out assistant perplexity, or generation-quality
-measurement is available. The completed three-record SNN run is wiring evidence
-only. No latency, power, or energy comparison has been made, and the exact
-hybrid SNN has not been calibrated or evaluated. These remain result gates
-rather than implementation claims. See
+A conversation dataset candidate has been selected and mechanically validated,
+but it has not received project-specific legal/policy approval and no full
+training run has been performed. Therefore no reportable ANN or SNN held-out
+assistant perplexity or generation-quality measurement is available. The
+completed three-record SNN run is wiring evidence only. No latency, power, or
+energy comparison has been made, and the exact hybrid SNN has not been
+calibrated or evaluated. These remain result gates rather than implementation
+claims. See
 [`CHATBOT_EXPERIMENT.md`](CHATBOT_EXPERIMENT.md) and
 [`results/CHATBOT_BASELINE.md`](results/CHATBOT_BASELINE.md).
 

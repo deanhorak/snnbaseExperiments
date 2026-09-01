@@ -34,6 +34,14 @@ from qwen_contract import (  # noqa: E402
     PHASE0_WEIGHT_SHA256,
 )
 
+PUBLICATION_SOURCE_IDS = frozenset(
+    {
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000002",
+        "00000000-0000-4000-8000-000000000005",
+    }
+)
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -99,8 +107,21 @@ class PublicationFixture:
 
         self.source = root / "source.jsonl"
         self.source.write_text(
-            '{"id":"source","messages":[{"role":"user","content":"u"},'
-            '{"role":"assistant","content":"a"}]}\n',
+            "".join(
+                json.dumps(
+                    {
+                        "id": identifier,
+                        "messages": [
+                            {"role": "user", "content": "u"},
+                            {"role": "assistant", "content": "a"},
+                        ],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+                for identifier in sorted(PUBLICATION_SOURCE_IDS)
+            ),
             encoding="utf-8",
         )
         self.dataset = root / "dataset"
@@ -623,6 +644,86 @@ class ChatbotPublishTests(unittest.TestCase):
                 stream.write("{}\n")
             with fixture.phase0_hashes(), self.assertRaisesRegex(
                 PublicationError, "does not match its recorded hash/size"
+            ):
+                fixture.assemble()
+
+    def test_dataset_derivation_artifacts_are_retained_and_rehashed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = PublicationFixture(Path(temporary))
+            conversion = fixture.dataset / "source-conversion-manifest.json"
+            lineage = fixture.dataset / "source-lineage.jsonl"
+            conversion.write_text('{"kind":"conversion-fixture"}\n', encoding="utf-8")
+            lineage.write_text('{"tree_id":"fixture"}\n', encoding="utf-8")
+            dataset_manifest = json.loads(
+                fixture.dataset_manifest.read_text(encoding="utf-8")
+            )
+            dataset_manifest["derivation"] = {
+                "conversion_manifest": {
+                    "path": conversion.name,
+                    "source_filename": "conversion-manifest.json",
+                    "size_bytes": conversion.stat().st_size,
+                    "sha256": _sha256(conversion),
+                },
+                "lineage": {
+                    "path": lineage.name,
+                    "source_filename": "lineage.jsonl",
+                    "size_bytes": lineage.stat().st_size,
+                    "sha256": _sha256(lineage),
+                    "record_count": 3,
+                },
+            }
+            _write_json(fixture.dataset_manifest, dataset_manifest)
+            summary = json.loads(fixture.summary.read_text(encoding="utf-8"))
+            summary["dataset"]["manifest_sha256"] = _sha256(fixture.dataset_manifest)
+            _write_json(fixture.summary, summary)
+
+            with mock.patch.object(
+                chatbot_publish, "validate_dataset_derivation"
+            ) as validator, fixture.phase0_hashes():
+                validator.return_value = PUBLICATION_SOURCE_IDS
+                manifest = fixture.assemble()
+            validator.assert_called_once()
+            artifacts = {item["kind"]: item["file"] for item in manifest["artifacts"]}
+            self.assertEqual(
+                artifacts["dataset_conversion_manifest"]["sha256"],
+                _sha256(conversion),
+            )
+            self.assertEqual(
+                artifacts["dataset_conversion_lineage"]["sha256"],
+                _sha256(lineage),
+            )
+
+            with mock.patch.object(
+                chatbot_publish,
+                "validate_dataset_derivation",
+                return_value=frozenset({"00000000-0000-4000-8000-000000000009"}),
+            ), fixture.phase0_hashes(), self.assertRaisesRegex(
+                PublicationError, "tree IDs differ"
+            ):
+                fixture.assemble()
+
+            lineage.write_text("tampered\n", encoding="utf-8")
+            with mock.patch.object(
+                chatbot_publish,
+                "validate_dataset_derivation",
+                return_value=PUBLICATION_SOURCE_IDS,
+            ), fixture.phase0_hashes(), self.assertRaisesRegex(
+                PublicationError, "conversion lineage.*hash/size"
+            ):
+                fixture.assemble()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = PublicationFixture(Path(temporary))
+            dataset_manifest = json.loads(
+                fixture.dataset_manifest.read_text(encoding="utf-8")
+            )
+            dataset_manifest["derivation"] = None
+            _write_json(fixture.dataset_manifest, dataset_manifest)
+            summary = json.loads(fixture.summary.read_text(encoding="utf-8"))
+            summary["dataset"]["manifest_sha256"] = _sha256(fixture.dataset_manifest)
+            _write_json(fixture.summary, summary)
+            with fixture.phase0_hashes(), self.assertRaisesRegex(
+                PublicationError, "derivation"
             ):
                 fixture.assemble()
 

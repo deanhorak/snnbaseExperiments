@@ -22,7 +22,10 @@ from chatbot_config import (
     ValidatedConfig,
     load_config,
 )
+from chatbot_prepare import load_canonical_conversation_ids
+from chatbot_train import validate_dataset_derivation
 from qwen_contract import (
+    ContractError,
     PHASE0_CONFIG_SHA256,
     PHASE0_MODEL_ID,
     PHASE0_REVISION,
@@ -747,6 +750,20 @@ def _load_dataset(
         or manifest.get("token_protocol") != "snnbase.chatbot.tokens/v1"
     ):
         raise PublicationError("dataset manifest contract is unsupported")
+    required_dataset_fields = {
+        "schema_version",
+        "kind",
+        "token_protocol",
+        "source",
+        "tokenizer",
+        "split",
+        "shards",
+    }
+    if set(manifest) not in (
+        required_dataset_fields,
+        required_dataset_fields | {"derivation"},
+    ):
+        raise PublicationError("dataset manifest has unexpected top-level fields")
 
     source = _mapping(manifest.get("source"), "dataset source provenance")
     source_digest = _recorded_file_digest(source_path, source, "dataset source")
@@ -787,6 +804,72 @@ def _load_dataset(
     artifacts = [
         {"kind": "dataset_manifest", "file": manifest_digest},
     ]
+    if "derivation" in manifest:
+        derivation = manifest["derivation"]
+        derivation_record = _mapping(derivation, "dataset derivation")
+        lineage_record = _mapping(
+            derivation_record.get("lineage"),
+            "dataset conversion lineage provenance",
+        )
+        try:
+            canonical_ids = load_canonical_conversation_ids(
+                source_path,
+                expected_size_bytes=source_digest["bytes"],
+                expected_sha256=source_digest["sha256"],
+                expected_record_count=_integer(
+                    lineage_record.get("record_count"),
+                    "dataset conversion lineage record_count",
+                ),
+            )
+            lineage_ids = validate_dataset_derivation(
+                root,
+                derivation,
+                source,
+                _mapping(manifest.get("tokenizer"), "dataset tokenizer"),
+                shard_manifest,
+            )
+        except ContractError as error:
+            raise PublicationError(
+                f"dataset conversion derivation is invalid: {error}"
+            ) from error
+        if lineage_ids != canonical_ids:
+            raise PublicationError(
+                "dataset conversion lineage tree IDs differ from canonical source IDs"
+            )
+        conversion_record = _mapping(
+            derivation_record.get("conversion_manifest"),
+            "dataset conversion manifest provenance",
+        )
+        conversion_path = _safe_child(
+            root,
+            conversion_record.get("path"),
+            "dataset conversion manifest",
+        )
+        lineage_path = _safe_child(
+            root,
+            lineage_record.get("path"),
+            "dataset conversion lineage",
+        )
+        artifacts.extend(
+            [
+                {
+                    "kind": "dataset_conversion_manifest",
+                    "file": _recorded_file_digest(
+                        conversion_path,
+                        conversion_record,
+                        "dataset conversion manifest",
+                    ),
+                },
+                {
+                    "kind": "dataset_conversion_lineage",
+                    "file": _recorded_file_digest(
+                        lineage_path,
+                        lineage_record,
+                        "dataset conversion lineage",
+                    ),
+                },
+            ]
+        )
     record_counts: dict[str, int] = {}
     for name in ("train", "validation", "test"):
         record = _mapping(shard_manifest[name], f"dataset {name} shard")
