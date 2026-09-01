@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "encode_cases": [
+    {
+      "id": "empty",
+      "text": "",
+      "add_special_tokens": false
+    },
+    {
+      "id": "ascii-punctuation",
+      "text": "Hello, world!",
+      "add_special_tokens": false
+    },
+    {
+      "id": "snn-unicode",
+      "text": "Spiking neural networks ⚡",
+      "add_special_tokens": false
+    },
+    {
+      "id": "cjk",
+      "text": "你好，世界！",
+      "add_special_tokens": false
+    },
+    {
+      "id": "whitespace",
+      "text": "line 1\nline 2\t",
+      "add_special_tokens": false
+    },
+    {
+      "id": "special-token-literals",
+      "text": "<|im_start|>user\nHello<|im_end|>\n",
+      "add_special_tokens": false
+    }
+  ],
+  "chat_cases": [
+    {
+      "id": "generation-thinking-disabled",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a concise SNN research assistant."
+        },
+        {
+          "role": "user",
+          "content": "Explain one benefit of event-driven computation."
+        }
+      ],
+      "add_generation_prompt": true,
+      "enable_thinking": false
+    },
+    {
+      "id": "completed-assistant-turn",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Reply with one word: spike"
+        },
+        {
+          "role": "assistant",
+          "content": "spike"
+        }
+      ],
+      "add_generation_prompt": false,
+      "enable_thinking": true
+    }
+  ],
+  "logit_cases": [
+    {
+      "id": "next-token-ascii",
+      "text": "The capital of France is",
+      "probe_token_ids": [0, 9707, 151643, 151645]
+    },
+    {
+      "id": "next-token-snn",
+      "text": "A spiking neural network processes",
+      "probe_token_ids": [13, 198, 151643, 151645]
+    },
+    {
+      "id": "next-token-unicode",
+      "text": "你好，世界！",
+      "probe_token_ids": [0, 198, 151643, 151645]
+    }
+  ]
+}

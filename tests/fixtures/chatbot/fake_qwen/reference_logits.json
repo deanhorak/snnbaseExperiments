@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "kind": "snnbase.qwen-reference-logits",
+  "oracle": {
+    "model_id": "tests/FakeQwen",
+    "revision": "0123456789abcdef0123456789abcdef01234567",
+    "tokenizer_fingerprint_sha256": "e2f448429ba76678d32ed7cf99e8d9adb031944a11a170771365a0f76f29a742"
+  },
+  "execution": {
+    "device": "cpu",
+    "model_dtype": "float32",
+    "deterministic_algorithms": true,
+    "seed": 0,
+    "absolute_tolerance": 1e-05,
+    "relative_tolerance": 1e-05
+  },
+  "cases": [
+    {
+      "id": "fake-next-byte",
+      "text": "AB",
+      "input_ids": [65, 66],
+      "final_logits": {
+        "shape": [256],
+        "canonical_dtype": "float32",
+        "byte_order": "little",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "top_k": [
+          {
+            "token_id": 67,
+            "logit": 4.0,
+            "decoded": "C"
+          }
+        ],
+        "probes": [
+          {
+            "token_id": 67,
+            "logit": 4.0
+          }
+        ]
+      }
+    }
+  ]
+}

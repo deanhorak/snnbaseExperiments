@@ -1,0 +1,391 @@
+{
+  "cases": [
+    {
+      "final_logits": {
+        "byte_order": "little",
+        "canonical_dtype": "float32",
+        "probes": [
+          {
+            "logit": 9.429159164428711,
+            "token_id": 0
+          },
+          {
+            "logit": 0.8583296537399292,
+            "token_id": 9707
+          },
+          {
+            "logit": 11.253374099731445,
+            "token_id": 151643
+          },
+          {
+            "logit": -1.0602633953094482,
+            "token_id": 151645
+          }
+        ],
+        "sha256": "d3bc6c1c21075d6bccb38a6f7b706553bfba226b9f048796728b9be187fe993d",
+        "shape": [
+          151936
+        ],
+        "top_k": [
+          {
+            "decoded": " Paris",
+            "logit": 21.03946304321289,
+            "token_id": 12095
+          },
+          {
+            "decoded": " ____",
+            "logit": 19.89212417602539,
+            "token_id": 30743
+          },
+          {
+            "decoded": " __",
+            "logit": 19.469772338867188,
+            "token_id": 1304
+          },
+          {
+            "decoded": " ______",
+            "logit": 19.313623428344727,
+            "token_id": 32671
+          },
+          {
+            "decoded": " _____",
+            "logit": 18.874940872192383,
+            "token_id": 65892
+          },
+          {
+            "decoded": "____",
+            "logit": 18.72234344482422,
+            "token_id": 2130
+          },
+          {
+            "decoded": " called",
+            "logit": 18.264606475830078,
+            "token_id": 2598
+          },
+          {
+            "decoded": " located",
+            "logit": 17.834487915039062,
+            "token_id": 7407
+          },
+          {
+            "decoded": ":\n",
+            "logit": 17.709888458251953,
+            "token_id": 510
+          },
+          {
+            "decoded": " Lyon",
+            "logit": 17.681724548339844,
+            "token_id": 55201
+          },
+          {
+            "decoded": " (",
+            "logit": 17.677356719970703,
+            "token_id": 320
+          },
+          {
+            "decoded": " the",
+            "logit": 17.601455688476562,
+            "token_id": 279
+          },
+          {
+            "decoded": "\n",
+            "logit": 17.53670310974121,
+            "token_id": 198
+          },
+          {
+            "decoded": " ",
+            "logit": 17.41480255126953,
+            "token_id": 220
+          },
+          {
+            "decoded": " ___",
+            "logit": 17.37455177307129,
+            "token_id": 7436
+          },
+          {
+            "decoded": ":\n\n",
+            "logit": 17.187156677246094,
+            "token_id": 1447
+          }
+        ]
+      },
+      "id": "next-token-ascii",
+      "input_ids": [
+        785,
+        6722,
+        315,
+        9625,
+        374
+      ],
+      "text": "The capital of France is"
+    },
+    {
+      "final_logits": {
+        "byte_order": "little",
+        "canonical_dtype": "float32",
+        "probes": [
+          {
+            "logit": 14.106500625610352,
+            "token_id": 13
+          },
+          {
+            "logit": 16.090267181396484,
+            "token_id": 198
+          },
+          {
+            "logit": 10.807764053344727,
+            "token_id": 151643
+          },
+          {
+            "logit": 0.9225178956985474,
+            "token_id": 151645
+          }
+        ],
+        "sha256": "9e92a6aa80e2795e0b512187d4a2376522dc27779af4642924b0e45b8074fa01",
+        "shape": [
+          151936
+        ],
+        "top_k": [
+          {
+            "decoded": " a",
+            "logit": 23.485090255737305,
+            "token_id": 264
+          },
+          {
+            "decoded": " input",
+            "logit": 23.15869140625,
+            "token_id": 1946
+          },
+          {
+            "decoded": " information",
+            "logit": 22.57194709777832,
+            "token_id": 1995
+          },
+          {
+            "decoded": " inputs",
+            "logit": 22.477243423461914,
+            "token_id": 11127
+          },
+          {
+            "decoded": " signals",
+            "logit": 22.254222869873047,
+            "token_id": 17289
+          },
+          {
+            "decoded": " an",
+            "logit": 22.162254333496094,
+            "token_id": 458
+          },
+          {
+            "decoded": " data",
+            "logit": 22.142120361328125,
+            "token_id": 821
+          },
+          {
+            "decoded": " the",
+            "logit": 21.749378204345703,
+            "token_id": 279
+          },
+          {
+            "decoded": " images",
+            "logit": 21.53990364074707,
+            "token_id": 5335
+          },
+          {
+            "decoded": " ",
+            "logit": 21.156814575195312,
+            "token_id": 220
+          },
+          {
+            "decoded": " sensory",
+            "logit": 20.833528518676758,
+            "token_id": 47969
+          },
+          {
+            "decoded": " binary",
+            "logit": 20.786359786987305,
+            "token_id": 7868
+          },
+          {
+            "decoded": " two",
+            "logit": 20.72785186767578,
+            "token_id": 1378
+          },
+          {
+            "decoded": " visual",
+            "logit": 20.535587310791016,
+            "token_id": 9124
+          },
+          {
+            "decoded": " incoming",
+            "logit": 20.381853103637695,
+            "token_id": 19393
+          },
+          {
+            "decoded": " sequences",
+            "logit": 20.24951171875,
+            "token_id": 23700
+          }
+        ]
+      },
+      "id": "next-token-snn",
+      "input_ids": [
+        32,
+        978,
+        19233,
+        29728,
+        3922,
+        11364
+      ],
+      "text": "A spiking neural network processes"
+    },
+    {
+      "final_logits": {
+        "byte_order": "little",
+        "canonical_dtype": "float32",
+        "probes": [
+          {
+            "logit": 10.05245304107666,
+            "token_id": 0
+          },
+          {
+            "logit": 17.251806259155273,
+            "token_id": 198
+          },
+          {
+            "logit": 12.142599105834961,
+            "token_id": 151643
+          },
+          {
+            "logit": -1.4132959842681885,
+            "token_id": 151645
+          }
+        ],
+        "sha256": "43a6fdede3904db5fbac19b51933270d3a1a3e37029bc4bac194558c1e388caa",
+        "shape": [
+          151936
+        ],
+        "top_k": [
+          {
+            "decoded": "\n",
+            "logit": 17.251806259155273,
+            "token_id": 198
+          },
+          {
+            "decoded": "我",
+            "logit": 16.66823959350586,
+            "token_id": 35946
+          },
+          {
+            "decoded": "你",
+            "logit": 16.438888549804688,
+            "token_id": 56568
+          },
+          {
+            "decoded": "我们",
+            "logit": 15.753189086914062,
+            "token_id": 97639
+          },
+          {
+            "decoded": "今天",
+            "logit": 15.443155288696289,
+            "token_id": 100644
+          },
+          {
+            "decoded": "请",
+            "logit": 15.442943572998047,
+            "token_id": 14880
+          },
+          {
+            "decoded": "我是",
+            "logit": 15.372504234313965,
+            "token_id": 104198
+          },
+          {
+            "decoded": "你好",
+            "logit": 15.10729694366455,
+            "token_id": 108386
+          },
+          {
+            "decoded": "在",
+            "logit": 15.04461669921875,
+            "token_id": 18493
+          },
+          {
+            "decoded": "我想",
+            "logit": 14.899691581726074,
+            "token_id": 104100
+          },
+          {
+            "decoded": " ",
+            "logit": 14.796889305114746,
+            "token_id": 220
+          },
+          {
+            "decoded": "请问",
+            "logit": 14.663333892822266,
+            "token_id": 109194
+          },
+          {
+            "decoded": "我的",
+            "logit": 14.652883529663086,
+            "token_id": 97611
+          },
+          {
+            "decoded": "你是",
+            "logit": 14.612520217895508,
+            "token_id": 105043
+          },
+          {
+            "decoded": "你能",
+            "logit": 14.532751083374023,
+            "token_id": 107809
+          },
+          {
+            "decoded": "您",
+            "logit": 14.466224670410156,
+            "token_id": 87026
+          }
+        ]
+      },
+      "id": "next-token-unicode",
+      "input_ids": [
+        108386,
+        3837,
+        99489,
+        6313
+      ],
+      "text": "你好，世界！"
+    }
+  ],
+  "execution": {
+    "absolute_tolerance": 1e-05,
+    "attention_implementation": "eager",
+    "deterministic_algorithms": true,
+    "device": "cpu",
+    "model_dtype": "float32",
+    "relative_tolerance": 1e-05,
+    "seed": 0
+  },
+  "implementation": {
+    "huggingface-hub": "0.30.2",
+    "safetensors": "0.5.3",
+    "tokenizers": "0.21.1",
+    "torch": "2.5.1+cu121",
+    "transformers": "4.51.3"
+  },
+  "kind": "snnbase.qwen-reference-logits",
+  "oracle": {
+    "checkpoint_files": [
+      {
+        "path": "model.safetensors",
+        "sha256": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
+        "size_bytes": 1192135096
+      }
+    ],
+    "model_id": "Qwen/Qwen3-0.6B-Base",
+    "revision": "da87bfb608c14b7cf20ba1ce41287e8de496c0cd",
+    "tokenizer_fingerprint_sha256": "6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237"
+  },
+  "schema_version": 1
+}

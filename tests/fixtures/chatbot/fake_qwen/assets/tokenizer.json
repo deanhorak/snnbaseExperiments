@@ -1,0 +1,5 @@
+{
+  "format": "snnbase-test-byte-tokenizer",
+  "version": 1,
+  "vocab_size": 256
+}

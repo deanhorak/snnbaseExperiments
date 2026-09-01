@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/deanhorak/snnbaseExperiments/schemas/chatbot-run-v1.schema.json",
+  "title": "snnbase chatbot run manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "created_utc",
+    "status",
+    "architecture",
+    "seed",
+    "publishable",
+    "repositories",
+    "executable",
+    "config",
+    "dataset",
+    "reference_model",
+    "tokenizer",
+    "training",
+    "command",
+    "toolchain",
+    "hardware",
+    "artifacts",
+    "metrics",
+    "notes"
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gitRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "fileDigest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "revision", "dirty"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "revision": {"$ref": "#/$defs/gitRevision"},
+        "dirty": {"type": "boolean"}
+      }
+    },
+    "qwenResource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "revision", "license", "files"],
+      "properties": {
+        "repository": {"const": "Qwen/Qwen3-0.6B-Base"},
+        "revision": {
+          "const": "da87bfb608c14b7cf20ba1ce41287e8de496c0cd"
+        },
+        "license": {"const": "Apache-2.0"},
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/fileDigest"}
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {"const": "snnbase-chatbot-run-v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "created_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "status": {"enum": ["planned", "completed", "failed"]},
+    "architecture": {"enum": ["ann", "snn"]},
+    "seed": {"type": "integer", "minimum": 0},
+    "publishable": {"type": "boolean"},
+    "repositories": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["experiments", "snnbase"],
+      "properties": {
+        "experiments": {"$ref": "#/$defs/repository"},
+        "snnbase": {"$ref": "#/$defs/repository"}
+      }
+    },
+    "executable": {"$ref": "#/$defs/fileDigest"},
+    "config": {"$ref": "#/$defs/fileDigest"},
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "source_uri",
+        "license",
+        "source",
+        "format",
+        "records",
+        "split"
+      ],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "source_uri": {"type": "string", "minLength": 1},
+        "license": {"type": "string", "minLength": 1},
+        "source": {"$ref": "#/$defs/fileDigest"},
+        "format": {"const": "snnbase-chatbot-jsonl-v1"},
+        "records": {"type": "integer", "minimum": 1},
+        "split": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm",
+            "seed",
+            "validation_basis_points",
+            "test_basis_points",
+            "train_records",
+            "validation_records",
+            "test_records"
+          ],
+          "properties": {
+            "algorithm": {"const": "sha256-seed-bucket-v1"},
+            "seed": {"type": "integer", "minimum": 0},
+            "validation_basis_points": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9999
+            },
+            "test_basis_points": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9999
+            },
+            "train_records": {"type": "integer", "minimum": 0},
+            "validation_records": {"type": "integer", "minimum": 0},
+            "test_records": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "reference_model": {
+      "allOf": [
+        {"$ref": "#/$defs/qwenResource"},
+        {
+          "properties": {
+            "files": {
+              "contains": {
+                "type": "object",
+                "properties": {
+                  "path": {"const": "config.json"},
+                  "sha256": {
+                    "const": "504a6b58c4271583724e66584b6b7698aea18450209df6b2f7582df0e89cee59"
+                  }
+                },
+                "required": ["path", "sha256"]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tokenizer": {
+      "allOf": [
+        {"$ref": "#/$defs/qwenResource"},
+        {
+          "properties": {
+            "files": {
+              "allOf": [
+                {
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "path": {"const": "tokenizer.json"},
+                      "sha256": {
+                        "const": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"
+                      }
+                    },
+                    "required": ["path", "sha256"]
+                  }
+                },
+                {
+                  "contains": {
+                    "type": "object",
+                    "properties": {
+                      "path": {"const": "tokenizer_config.json"},
+                      "sha256": {
+                        "const": "3c04ed3ca964ea2f6b2b5faf0dc4d31aec1cb1e8b4bcf63f402d295046b422b5"
+                      }
+                    },
+                    "required": ["path", "sha256"]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "training": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objective",
+        "loss_scope",
+        "assistant_only_loss",
+        "ignore_index"
+      ],
+      "properties": {
+        "objective": {"const": "causal_language_modeling"},
+        "loss_scope": {"const": "assistant_content_and_eom"},
+        "assistant_only_loss": {"const": true},
+        "ignore_index": {"const": -100}
+      }
+    },
+    "command": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string"}
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compiler", "cmake", "torch", "cuda"],
+      "properties": {
+        "compiler": {"type": "string"},
+        "cmake": {"type": "string"},
+        "torch": {"type": "string"},
+        "cuda": {"type": "string"}
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "gpu"],
+      "properties": {
+        "cpu": {"type": "string"},
+        "gpu": {"type": "string"}
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "file"],
+        "properties": {
+          "kind": {"type": "string", "minLength": 1},
+          "file": {"$ref": "#/$defs/fileDigest"}
+        }
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "value", "unit"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "value": {"type": "number"},
+          "unit": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"publishable": {"const": true}},
+        "required": ["publishable"]
+      },
+      "then": {
+        "properties": {
+          "status": {"const": "completed"},
+          "repositories": {
+            "properties": {
+              "experiments": {
+                "properties": {"dirty": {"const": false}}
+              },
+              "snnbase": {
+                "properties": {"dirty": {"const": false}}
+              }
+            }
+          },
+          "toolchain": {
+            "properties": {
+              "compiler": {"minLength": 1},
+              "cmake": {"minLength": 1},
+              "torch": {"minLength": 1}
+            }
+          },
+          "hardware": {
+            "properties": {
+              "cpu": {"minLength": 1},
+              "gpu": {"minLength": 1}
+            }
+          },
+          "artifacts": {"minItems": 1},
+          "metrics": {"minItems": 1}
+        }
+      }
+    }
+  ]
+}

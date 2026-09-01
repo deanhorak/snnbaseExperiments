@@ -78,6 +78,27 @@ then validate and extract them:
 ./build/nmnist_experiment --epochs 1 --time-bins 10
 ```
 
+### Phase 0 spiking chatbot track
+
+The chatbot work now has two explicit tracks:
+
+- exact `Qwen/Qwen3-0.6B-Base` dense archive import in ANN mode, a bounded
+  final-position logit oracle, and a hybrid SNN mode that retains the imported
+  dense tensors while adding experiment-owned LIF dynamics; and
+- independently trainable compact ANN and hybrid-SNN controls using the same
+  verified tokenizer, data contract, and evaluation driver.
+
+The deterministic converter maps all 310 Qwen dense tensors. A local ignored
+three-case CPU float32 oracle run matched every probe ID and ordered top-16 ID
+within `atol=rtol=1e-5`; this is development evidence, not a promoted durable
+baseline. The pinned OASST2 snapshot below is a selected development candidate,
+not a universally safe corpus or a legally approved dataset. No full training
+or held-out quality run has been performed, and no latency, power, or energy
+claim is supported. The training driver validates and consumes the checked JSON
+configs, then launches the core with their canonical argument arrays. See [the
+chatbot experiment contract](docs/CHATBOT_EXPERIMENT.md) and [baseline
+status](docs/results/CHATBOT_BASELINE.md).
+
 ## Prerequisites
 
 - CMake 3.20 or newer
@@ -86,6 +107,8 @@ then validate and extract them:
 - LibTorch 2.3 or newer, with CUDA support for GPU training
 - A sibling checkout at `../snnbase`, or an explicit `SNNBASE_SOURCE_DIR`
 - `curl`, `gzip`, and `unzip` to use the dataset download helpers
+- Python 3.10 or newer for the optional Qwen reference tools; the offline
+  contract suite itself uses only the Python standard library
 
 ## Build and test
 
@@ -94,6 +117,14 @@ git clone https://github.com/deanhorak/snnbase.git ../snnbase
 cmake --preset default
 cmake --build --preset default
 ctest --preset default
+```
+
+The chatbot data, manifest, protocol, and local reference-fixture contracts can
+be checked without `snnbase`, LibTorch, model assets, package installation, or
+network access:
+
+```sh
+./scripts/check_chatbot_contracts.sh
 ```
 
 For a checkout elsewhere:
@@ -231,6 +262,209 @@ comparison are documented in
 [docs/results/TEMPORAL_ARCHITECTURE_UPGRADE.md](docs/results/TEMPORAL_ARCHITECTURE_UPGRADE.md).
 
 Use `--help` for all options. Dataset files are ignored by Git and must not be committed.
+
+## Run the chatbot tracks
+
+Install the pinned reference tooling and download the immutable Phase 0 Qwen
+snapshot (both steps require network access), then verify it and regenerate the
+checked-in tokenizer/logit goldens:
+
+```sh
+python3 -m venv .venv-chatbot-reference
+.venv-chatbot-reference/bin/pip install -r requirements/qwen-reference.lock
+SNNBASE_REFERENCE_PYTHON=.venv-chatbot-reference/bin/python \
+  ./scripts/download_qwen_assets.sh \
+  --model-id Qwen/Qwen3-0.6B-Base \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd \
+  --expected-tokenizer-fingerprint \
+    6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237 \
+  --output-dir artifacts/chatbot/qwen3-0.6b-base \
+  --include-weights
+SNNBASE_REFERENCE_PYTHON=.venv-chatbot-reference/bin/python \
+  ./scripts/check_qwen_reference.sh \
+  --assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --include-logits
+```
+
+The requirements file pins direct package versions but does not contain wheel
+hashes or all transitive artifacts; retain the resolved environment manifest
+for a promoted reference run. Once the environment and snapshot exist, the
+`check_qwen_reference.sh` step itself is offline. Offline implementation checks
+remain available through `./scripts/check_chatbot_contracts.sh`.
+
+The tested `snnbase` language-backend revision is
+`c282306ee3b80ccc5123fcb8b2da78ae51ed09fe`. Check out that exact revision,
+then configure it explicitly and run the tiny CPU smoke tests:
+
+```sh
+./scripts/configure_chatbot.sh \
+  --snnbase-source /path/to/snnbase \
+  --snnbase-revision c282306ee3b80ccc5123fcb8b2da78ae51ed09fe \
+  --torch-prefix /path/to/libtorch/share/cmake \
+  --build-dir build-chatbot \
+  --build-type Release
+./scripts/run_chatbot_smoke.sh --build-dir build-chatbot
+```
+
+The default configure path pins CUDA 12.1, GCC 11, and SM86. For a CPU-only
+LibTorch distribution, add `--toolchain none`; keep `--build-type Release` for
+oracle measurements. These are separate supported recipes, and a run manifest
+must record which one produced the executable.
+
+The smoke command proves tensor shapes, forward/backward execution, checkpoint
+plumbing, and the bounded token protocol on a tiny synthetic sequence. It does
+not establish conversational quality.
+
+Convert the exact verified Qwen checkpoint and run the bounded ANN oracle:
+
+```sh
+python3 tools/qwen_convert.py convert \
+  --assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --model-id Qwen/Qwen3-0.6B-Base \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd \
+  --expected-tokenizer-fingerprint \
+    6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237 \
+  --output-dir artifacts/chatbot/qwen3-0.6b-base-dense-v1
+./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
+  python3 tools/qwen_oracle_gate.py \
+  --runner ./build-chatbot/chatbot_experiment \
+  --archive artifacts/chatbot/qwen3-0.6b-base-dense-v1/qwen-dense.snnq \
+  --archive-sha256 \
+    333c8be1b3fde5013ee8d1dcb96f23051dd934f8e1f359aff329e7e5cf8ccac8 \
+  --reference tests/fixtures/chatbot/qwen3_phase0_reference_logits.json \
+  --output artifacts/chatbot/qwen3-oracle-gate.json
+```
+
+Both paths use the same immutable prepared-token contract. The selected
+development candidate is the OASST2 ready-tree archive at revision
+`179dd21fc55192153d94adb0e0ce8f69e222bf75`. With that exact archive already at
+`data/source/oasst2/2023-11-05_oasst2_ready.trees.jsonl.gz`, this command is
+offline and creates one immutable conversion bundle:
+
+```sh
+.venv-chatbot-reference/bin/python tools/oasst2_convert.py \
+  --profile quality05 \
+  --assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --model-id Qwen/Qwen3-0.6B-Base \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd \
+  --expected-tokenizer-fingerprint \
+    6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237 \
+  --input data/source/oasst2/2023-11-05_oasst2_ready.trees.jsonl.gz \
+  --expected-source-sha256 \
+    7a886a16ccfc1173c4f00a6897523e3c95b2785a86ee44a18a98f4f2807ee29b \
+  --expected-source-bytes 54370156 \
+  --source-uri \
+    https://huggingface.co/datasets/OpenAssistant/oasst2/resolve/179dd21fc55192153d94adb0e0ce8f69e222bf75/2023-11-05_oasst2_ready.trees.jsonl.gz \
+  --source-version 179dd21fc55192153d94adb0e0ce8f69e222bf75 \
+  --source-license Apache-2.0 \
+  --license-reviewed --policy-reviewed \
+  --output-dir \
+    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-v1 \
+  --max-input-tokens 512
+```
+
+The `quality05` profile is the recommended development profile; it is a
+reproducible selection policy, not a safety certification. Its expected output
+after exact normalized-root-prompt deduplication is 12,427 conversations
+(9,990 train, 1,165 validation, and 1,272 test). Near-duplicate analysis is
+still required. The exact token-aware 512-token gate is the sequence-length
+control; the converter's default 32,768-byte aggregate-content limit remains a
+pre-tokenization resource bound. The `conservative-zero` profile is retained as
+an audit alternative and is not the default; after the same deduplication it
+keeps 1,700 conversations (1,407 train, 140 validation, and 153 test) and nearly
+eliminates multi-turn material. Neither profile establishes quality or legal
+approval. The review flags attest only that the declared Apache-2.0 metadata
+and the explicit policy were reviewed.
+
+Prepare the converter's canonical `conversations.jsonl`, binding the next
+manifest to the canonical SHA-256 recorded by `conversion-manifest.json`, then
+run the compact ANN control:
+
+```sh
+OASST2_CONVERSION_DIR=artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-v1
+OASST2_CANONICAL_SHA256="$(
+  python3 -c \
+    'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["output"]["sha256"])' \
+    "$OASST2_CONVERSION_DIR/conversion-manifest.json"
+)"
+.venv-chatbot-reference/bin/python tools/chatbot_prepare.py \
+  --assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --model-id Qwen/Qwen3-0.6B-Base \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd \
+  --expected-tokenizer-fingerprint \
+    6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237 \
+  --input "$OASST2_CONVERSION_DIR/conversations.jsonl" \
+  --conversion-manifest \
+    "$OASST2_CONVERSION_DIR/conversion-manifest.json" \
+  --source-uri "urn:sha256:$OASST2_CANONICAL_SHA256" \
+  --source-version "sha256:$OASST2_CANONICAL_SHA256" \
+  --source-license Apache-2.0 \
+  --output-dir \
+    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-prepared-v1 \
+  --max-input-tokens 512
+./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
+  python3 tools/chatbot_train.py \
+  --dataset-dir \
+    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-prepared-v1 \
+  --run-dir artifacts/chatbot/runs/compact-ann-seed42 \
+  --core-executable ./build-chatbot/chatbot_experiment \
+  --config configs/chatbot/ann-baseline.json
+```
+
+The conversion manifest is the upstream link from that canonical hash to the
+pinned compressed archive, converter, tokenizer, policy, counts, and lineage.
+Preparation verifies that chain, then retains hashed copies as
+`source-conversion-manifest.json` and `source-lineage.jsonl`; training validates
+them and publication includes both as artifacts. Both `data/` and `artifacts/`
+are ignored by Git; do not commit raw or derived data.
+
+The config validator proves that its stored architecture, geometry, optimizer,
+and runner argv agree before the core launches. The other three complete
+config-driven commands, selection rules, and result gates are in
+[`docs/CHATBOT_EXPERIMENT.md`](docs/CHATBOT_EXPERIMENT.md). The driver selects
+the lowest validation loss including epoch zero, reloads that checkpoint into
+a second process, requires the restored counters and validation metrics to
+match, and only then touches the test split once.
+
+Start interactive exact imported ANN inference:
+
+```sh
+./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
+  .venv-chatbot-reference/bin/python tools/chatbot_cli.py \
+  --assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --core-executable ./build-chatbot/chatbot_experiment \
+  --qwen-archive artifacts/chatbot/qwen3-0.6b-base-dense-v1/qwen-dense.snnq \
+  --qwen-archive-sha256 \
+    333c8be1b3fde5013ee8d1dcb96f23051dd934f8e1f359aff329e7e5cf8ccac8 \
+  --context-tokens 512 \
+  --max-new-tokens 128 \
+  --seed 42 \
+  --temperature 0 \
+  --ann --device cpu
+```
+
+`/reset` clears local multi-turn history and resets the persistent C++ core;
+`/quit` shuts it down. Every prompt is rendered by the verified official Qwen
+chat template. The pinned checkpoint is a pretrained Base model rather than an
+instruction-tuned chat model, so untrained output is a plumbing demonstration.
+The client reserves completion space inside the context window
+and evicts only complete oldest user/assistant turns when necessary. Generation
+is greedy when `--temperature 0`; sampled requests are explicitly seeded by
+`--seed` and retain fixed `--temperature`, `--top-k`, and `--top-p` settings.
+The bridge also passes the verified tokenizer's decodable vocabulary size, so
+the core cannot emit one of Qwen's padded, non-tokenizer output rows.
+Cross-device determinism still depends on the recorded Torch/hardware stack.
+The executable and checkpoint are passed as an argument vector, never through
+a shell. The wrapper reads the configured `Torch_DIR` and prepends that exact
+library directory before launching Python and its persistent C++ child, so an
+inherited incompatible LibTorch path cannot silently change the runtime.
+
+Use `--snn` only as an uncalibrated hybrid smoke, or replace the archive options
+with `--checkpoint PATH` for a matching trained compact model. Pass
+`--qwen3-0.6b` as well when the checkpoint uses the exact Qwen geometry. The
+repository does not contain a trained chatbot checkpoint. Interactive text
+demonstrates the interface unless it is tied to a retained, evaluated run
+artifact.
 
 ## Repository layout
 

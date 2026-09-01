@@ -1,0 +1,199 @@
+{
+  "chat_cases": [
+    {
+      "add_generation_prompt": true,
+      "enable_thinking": false,
+      "id": "generation-thinking-disabled",
+      "messages": [
+        {
+          "content": "You are a concise SNN research assistant.",
+          "role": "system"
+        },
+        {
+          "content": "Explain one benefit of event-driven computation.",
+          "role": "user"
+        }
+      ],
+      "rendered": "<|im_start|>system\nYou are a concise SNN research assistant.<|im_end|>\n<|im_start|>user\nExplain one benefit of event-driven computation.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+      "token_ids": [
+        151644,
+        8948,
+        198,
+        2610,
+        525,
+        264,
+        63594,
+        328,
+        9745,
+        3412,
+        17847,
+        13,
+        151645,
+        198,
+        151644,
+        872,
+        198,
+        840,
+        20772,
+        825,
+        8760,
+        315,
+        1538,
+        31405,
+        34447,
+        13,
+        151645,
+        198,
+        151644,
+        77091,
+        198,
+        151667,
+        271,
+        151668,
+        271
+      ]
+    },
+    {
+      "add_generation_prompt": false,
+      "enable_thinking": true,
+      "id": "completed-assistant-turn",
+      "messages": [
+        {
+          "content": "Reply with one word: spike",
+          "role": "user"
+        },
+        {
+          "content": "spike",
+          "role": "assistant"
+        }
+      ],
+      "rendered": "<|im_start|>user\nReply with one word: spike<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nspike<|im_end|>\n",
+      "token_ids": [
+        151644,
+        872,
+        198,
+        20841,
+        448,
+        825,
+        3409,
+        25,
+        36293,
+        151645,
+        198,
+        151644,
+        77091,
+        198,
+        151667,
+        271,
+        151668,
+        271,
+        2154,
+        2970,
+        151645,
+        198
+      ]
+    }
+  ],
+  "encode_cases": [
+    {
+      "add_special_tokens": false,
+      "decoded": "",
+      "id": "empty",
+      "text": "",
+      "token_ids": []
+    },
+    {
+      "add_special_tokens": false,
+      "decoded": "Hello, world!",
+      "id": "ascii-punctuation",
+      "text": "Hello, world!",
+      "token_ids": [
+        9707,
+        11,
+        1879,
+        0
+      ]
+    },
+    {
+      "add_special_tokens": false,
+      "decoded": "Spiking neural networks ⚡",
+      "id": "snn-unicode",
+      "text": "Spiking neural networks ⚡",
+      "token_ids": [
+        6406,
+        19233,
+        29728,
+        14155,
+        2858,
+        248,
+        94
+      ]
+    },
+    {
+      "add_special_tokens": false,
+      "decoded": "你好，世界！",
+      "id": "cjk",
+      "text": "你好，世界！",
+      "token_ids": [
+        108386,
+        3837,
+        99489,
+        6313
+      ]
+    },
+    {
+      "add_special_tokens": false,
+      "decoded": "line 1\nline 2\t",
+      "id": "whitespace",
+      "text": "line 1\nline 2\t",
+      "token_ids": [
+        1056,
+        220,
+        16,
+        198,
+        1056,
+        220,
+        17,
+        197
+      ]
+    },
+    {
+      "add_special_tokens": false,
+      "decoded": "<|im_start|>user\nHello<|im_end|>\n",
+      "id": "special-token-literals",
+      "text": "<|im_start|>user\nHello<|im_end|>\n",
+      "token_ids": [
+        151644,
+        872,
+        198,
+        9707,
+        151645,
+        198
+      ]
+    }
+  ],
+  "implementation": {
+    "huggingface-hub": "0.30.2",
+    "tokenizers": "0.21.1",
+    "transformers": "4.51.3"
+  },
+  "kind": "snnbase.qwen-tokenizer-golden",
+  "oracle": {
+    "model_id": "Qwen/Qwen3-0.6B-Base",
+    "revision": "da87bfb608c14b7cf20ba1ce41287e8de496c0cd",
+    "tokenizer_fingerprint_sha256": "6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237"
+  },
+  "schema_version": 1,
+  "tokenizer": {
+    "class": "Qwen2TokenizerFast",
+    "is_fast": true,
+    "size_with_added_tokens": 151669,
+    "special_token_ids": {
+      "bos_token_id": null,
+      "eos_token_id": 151643,
+      "pad_token_id": 151643,
+      "unk_token_id": null
+    },
+    "vocab_size": 151643
+  }
+}

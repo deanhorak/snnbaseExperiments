@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "kind": "snnbase.qwen-assets",
+  "model_id": "tests/FakeQwen",
+  "revision": "0123456789abcdef0123456789abcdef01234567",
+  "tokenizer": {
+    "fingerprint_algorithm": "sha256-canonical-file-manifest-v1",
+    "fingerprint_sha256": "e2f448429ba76678d32ed7cf99e8d9adb031944a11a170771365a0f76f29a742",
+    "tokenizer_json_sha256": "4946401a5a188bc1f0503dc22b798ea5568959a63ac52e564fe1b2b21db1cdf8",
+    "files": [
+      {
+        "path": "tokenizer.json",
+        "size_bytes": 83,
+        "sha256": "4946401a5a188bc1f0503dc22b798ea5568959a63ac52e564fe1b2b21db1cdf8"
+      },
+      {
+        "path": "tokenizer_config.json",
+        "size_bytes": 115,
+        "sha256": "6fec68dab3ddf1506e1f75f61ef564a55b63f3bc92f24f405ae43595ee01cdeb"
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": "tokenizer.json",
+      "size_bytes": 83,
+      "sha256": "4946401a5a188bc1f0503dc22b798ea5568959a63ac52e564fe1b2b21db1cdf8"
+    },
+    {
+      "path": "tokenizer_config.json",
+      "size_bytes": 115,
+      "sha256": "6fec68dab3ddf1506e1f75f61ef564a55b63f3bc92f24f405ae43595ee01cdeb"
+    },
+    {
+      "path": "config.json",
+      "size_bytes": 105,
+      "sha256": "176d4b66522b8b307cb47ac2343a63f951fb03ca20ff366e9657380bdfc58956"
+    }
+  ],
+  "weights_present": false,
+  "weight_files": []
+}

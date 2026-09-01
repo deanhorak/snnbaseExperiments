@@ -1,0 +1,9 @@
+# Install into an isolated virtual environment.  The repository's validated
+# CUDA image supplies the platform-specific torch wheel/index; CPU-only users
+# may install the matching PyPI wheel.
+torch==2.5.1
+transformers==4.51.3
+tokenizers==0.21.1
+huggingface-hub==0.30.2
+safetensors==0.5.3
+Jinja2==3.1.6

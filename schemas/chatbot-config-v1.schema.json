@@ -1,0 +1,898 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/deanhorak/snnbaseExperiments/schemas/chatbot-config-v1.schema.json",
+  "title": "snnbase chatbot resolved config v1",
+  "description": "Structural contract for the four Phase 0 chatbot configurations. Cross-field runner argv equivalence is enforced by tools/chatbot_config.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "track",
+    "architecture",
+    "seed",
+    "implementation_status",
+    "reference",
+    "model",
+    "runner_binding"
+  ],
+  "properties": {
+    "schema_version": {"const": "snnbase-chatbot-config-v1"},
+    "experiment_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "track": {
+      "enum": [
+        "compact_trainable_ann_snn",
+        "exact_qwen_ann_parity_and_hybrid_snn_conversion"
+      ]
+    },
+    "architecture": {"enum": ["ann", "snn"]},
+    "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "implementation_status": {"type": "object"},
+    "reference": {"type": "object"},
+    "dataset": {"type": "object"},
+    "tokenization": {"type": "object"},
+    "archive": {"type": "object"},
+    "model": {"type": "object"},
+    "spiking": {"type": "object"},
+    "training": {"type": "object"},
+    "runner_binding": {"$ref": "#/$defs/runnerBinding"},
+    "evaluation": {"type": "object"},
+    "publication_gate": {"type": "object"},
+    "oracle": {"type": "object"},
+    "claim_boundary": {"type": "object"}
+  },
+  "oneOf": [
+    {
+      "required": [
+        "dataset",
+        "tokenization",
+        "training",
+        "evaluation",
+        "publication_gate"
+      ],
+      "properties": {
+        "track": {"const": "compact_trainable_ann_snn"},
+        "architecture": {"const": "ann"},
+        "implementation_status": {"$ref": "#/$defs/compactAnnStatus"},
+        "reference": {"$ref": "#/$defs/compactReference"},
+        "dataset": {"$ref": "#/$defs/dataset"},
+        "tokenization": {"$ref": "#/$defs/tokenization"},
+        "archive": false,
+        "model": {"$ref": "#/$defs/compactAnnModel"},
+        "spiking": false,
+        "training": {"$ref": "#/$defs/training"},
+        "evaluation": {"$ref": "#/$defs/compactAnnEvaluation"},
+        "publication_gate": {"$ref": "#/$defs/publicationGate"},
+        "oracle": false,
+        "claim_boundary": false
+      }
+    },
+    {
+      "required": [
+        "dataset",
+        "tokenization",
+        "spiking",
+        "training",
+        "evaluation",
+        "publication_gate"
+      ],
+      "properties": {
+        "track": {"const": "compact_trainable_ann_snn"},
+        "architecture": {"const": "snn"},
+        "implementation_status": {"$ref": "#/$defs/compactSnnStatus"},
+        "reference": {"$ref": "#/$defs/compactReference"},
+        "dataset": {"$ref": "#/$defs/dataset"},
+        "tokenization": {"$ref": "#/$defs/tokenization"},
+        "archive": false,
+        "model": {"$ref": "#/$defs/compactSnnModel"},
+        "spiking": {"$ref": "#/$defs/compactSpiking"},
+        "training": {"$ref": "#/$defs/training"},
+        "evaluation": {"$ref": "#/$defs/compactSnnEvaluation"},
+        "publication_gate": {"$ref": "#/$defs/publicationGate"},
+        "oracle": false,
+        "claim_boundary": false
+      }
+    },
+    {
+      "required": [
+        "dataset",
+        "tokenization",
+        "archive",
+        "training",
+        "evaluation",
+        "publication_gate",
+        "oracle",
+        "claim_boundary"
+      ],
+      "properties": {
+        "track": {"const": "exact_qwen_ann_parity_and_hybrid_snn_conversion"},
+        "architecture": {"const": "ann"},
+        "implementation_status": {"$ref": "#/$defs/exactAnnStatus"},
+        "reference": {"$ref": "#/$defs/exactReference"},
+        "dataset": {"$ref": "#/$defs/dataset"},
+        "tokenization": {"$ref": "#/$defs/tokenization"},
+        "archive": {"$ref": "#/$defs/archive"},
+        "model": {"$ref": "#/$defs/exactAnnModel"},
+        "spiking": false,
+        "training": {"$ref": "#/$defs/training"},
+        "evaluation": {"$ref": "#/$defs/compactAnnEvaluation"},
+        "publication_gate": {"$ref": "#/$defs/publicationGate"},
+        "oracle": {"$ref": "#/$defs/oracle"},
+        "claim_boundary": {"$ref": "#/$defs/exactAnnClaims"}
+      }
+    },
+    {
+      "required": [
+        "dataset",
+        "tokenization",
+        "archive",
+        "spiking",
+        "training",
+        "evaluation",
+        "publication_gate",
+        "claim_boundary"
+      ],
+      "properties": {
+        "track": {"const": "exact_qwen_ann_parity_and_hybrid_snn_conversion"},
+        "architecture": {"const": "snn"},
+        "implementation_status": {"$ref": "#/$defs/exactSnnStatus"},
+        "reference": {"$ref": "#/$defs/exactReference"},
+        "dataset": {"$ref": "#/$defs/dataset"},
+        "tokenization": {"$ref": "#/$defs/tokenization"},
+        "archive": {"$ref": "#/$defs/archive"},
+        "model": {"$ref": "#/$defs/exactSnnModel"},
+        "spiking": {"$ref": "#/$defs/exactSpiking"},
+        "training": {"$ref": "#/$defs/training"},
+        "evaluation": {"$ref": "#/$defs/compactSnnEvaluation"},
+        "publication_gate": {"$ref": "#/$defs/publicationGate"},
+        "oracle": false,
+        "claim_boundary": {"$ref": "#/$defs/exactSnnClaims"}
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nonemptyString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "stringList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/nonemptyString"}
+    },
+    "compactAnnStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config_consumed_automatically",
+        "prepare_driver",
+        "training_driver",
+        "full_training_run",
+        "held_out_quality"
+      ],
+      "properties": {
+        "config_consumed_automatically": {"const": true},
+        "prepare_driver": {"const": "implemented"},
+        "training_driver": {"const": "implemented"},
+        "full_training_run": {"const": "not_run"},
+        "held_out_quality": {"const": "not_measured"}
+      }
+    },
+    "compactSnnStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config_consumed_automatically",
+        "prepare_driver",
+        "training_driver",
+        "ann_checkpoint_transfer",
+        "full_training_run",
+        "held_out_quality"
+      ],
+      "properties": {
+        "config_consumed_automatically": {"const": true},
+        "prepare_driver": {"const": "implemented"},
+        "training_driver": {"const": "implemented"},
+        "ann_checkpoint_transfer": {
+          "const": "not_implemented_checkpoint_signature_includes_spiking_mode"
+        },
+        "full_training_run": {"const": "not_run"},
+        "held_out_quality": {"const": "not_measured"}
+      }
+    },
+    "exactAnnStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config_consumed_automatically",
+        "dense_conversion",
+        "archive_loader",
+        "bounded_inspect_protocol",
+        "oracle_gate",
+        "training",
+        "held_out_quality"
+      ],
+      "properties": {
+        "config_consumed_automatically": {"const": true},
+        "dense_conversion": {"const": "implemented"},
+        "archive_loader": {"const": "implemented"},
+        "bounded_inspect_protocol": {"const": "implemented"},
+        "oracle_gate": {"const": "passed_local_ignored_development_run_not_promoted"},
+        "training": {"const": "not_run"},
+        "held_out_quality": {"const": "not_measured"}
+      }
+    },
+    "exactSnnStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config_consumed_automatically",
+        "dense_conversion",
+        "archive_loader",
+        "runtime_lif_initialization",
+        "ann_oracle_prerequisite",
+        "snn_calibration_or_fine_tuning",
+        "held_out_quality"
+      ],
+      "properties": {
+        "config_consumed_automatically": {"const": true},
+        "dense_conversion": {"const": "implemented"},
+        "archive_loader": {"const": "implemented"},
+        "runtime_lif_initialization": {"const": "implemented"},
+        "ann_oracle_prerequisite": {"const": "passed_local_ignored_development_run_not_promoted"},
+        "snn_calibration_or_fine_tuning": {"const": "not_run"},
+        "held_out_quality": {"const": "not_measured"}
+      }
+    },
+    "compactReferenceFiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["config.json", "tokenizer.json", "tokenizer_config.json"],
+      "properties": {
+        "config.json": {"const": "504a6b58c4271583724e66584b6b7698aea18450209df6b2f7582df0e89cee59"},
+        "tokenizer.json": {"const": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"},
+        "tokenizer_config.json": {"const": "3c04ed3ca964ea2f6b2b5faf0dc4d31aec1cb1e8b4bcf63f402d295046b422b5"}
+      }
+    },
+    "exactReferenceFiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "properties": {
+        "config.json": {"const": "504a6b58c4271583724e66584b6b7698aea18450209df6b2f7582df0e89cee59"},
+        "model.safetensors": {"const": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba"},
+        "tokenizer.json": {"const": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"},
+        "tokenizer_config.json": {"const": "3c04ed3ca964ea2f6b2b5faf0dc4d31aec1cb1e8b4bcf63f402d295046b422b5"}
+      }
+    },
+    "compactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "revision",
+        "role",
+        "files",
+        "tokenizer_fingerprint_sha256",
+        "license"
+      ],
+      "properties": {
+        "repository": {"const": "Qwen/Qwen3-0.6B-Base"},
+        "revision": {"const": "da87bfb608c14b7cf20ba1ce41287e8de496c0cd"},
+        "role": {"const": "tokenizer_and_external_oracle_not_weight_initialization"},
+        "files": {"$ref": "#/$defs/compactReferenceFiles"},
+        "tokenizer_fingerprint_sha256": {"const": "6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237"},
+        "license": {"const": "Apache-2.0"}
+      }
+    },
+    "exactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "revision",
+        "license",
+        "files",
+        "tokenizer_fingerprint_sha256"
+      ],
+      "properties": {
+        "repository": {"const": "Qwen/Qwen3-0.6B-Base"},
+        "revision": {"const": "da87bfb608c14b7cf20ba1ce41287e8de496c0cd"},
+        "license": {"const": "Apache-2.0"},
+        "files": {"$ref": "#/$defs/exactReferenceFiles"},
+        "tokenizer_fingerprint_sha256": {"const": "6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237"}
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "format",
+        "selection_status",
+        "strict_validation",
+        "limits",
+        "split"
+      ],
+      "properties": {
+        "path": {"$ref": "#/$defs/nonemptyString"},
+        "format": {"const": "snnbase-chatbot-jsonl-v1"},
+        "selection_status": {"const": "not_selected_or_approved"},
+        "strict_validation": {"const": true},
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maximum_records",
+            "maximum_line_bytes",
+            "maximum_id_bytes",
+            "maximum_messages_per_conversation",
+            "maximum_content_bytes_per_message"
+          ],
+          "properties": {
+            "maximum_records": {"type": "integer", "minimum": 1},
+            "maximum_line_bytes": {"type": "integer", "minimum": 1},
+            "maximum_id_bytes": {"type": "integer", "minimum": 1},
+            "maximum_messages_per_conversation": {"type": "integer", "minimum": 2},
+            "maximum_content_bytes_per_message": {"type": "integer", "minimum": 1}
+          }
+        },
+        "split": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "algorithm",
+            "seed",
+            "validation_basis_points",
+            "test_basis_points"
+          ],
+          "properties": {
+            "algorithm": {"const": "sha256-seed-bucket-v1"},
+            "seed": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+            "validation_basis_points": {"type": "integer", "minimum": 1, "maximum": 9998},
+            "test_basis_points": {"type": "integer", "minimum": 1, "maximum": 9998}
+          }
+        }
+      }
+    },
+    "tokenization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation",
+        "template_source",
+        "add_generation_prompt_during_training",
+        "add_bos_token",
+        "endoftext_id",
+        "im_start_id",
+        "im_end_id",
+        "assistant_eom_id",
+        "stop_token_ids",
+        "maximum_sequence_tokens",
+        "overlength_policy",
+        "packing",
+        "golden_token_tests_required"
+      ],
+      "properties": {
+        "implementation": {"const": "official_tokenizer_artifacts"},
+        "template_source": {"const": "tokenizer_config.json"},
+        "add_generation_prompt_during_training": {"const": false},
+        "add_bos_token": {"const": false},
+        "endoftext_id": {"const": 151643},
+        "im_start_id": {"const": 151644},
+        "im_end_id": {"const": 151645},
+        "assistant_eom_id": {"const": 151645},
+        "stop_token_ids": {"const": [151645, 151643]},
+        "maximum_sequence_tokens": {"type": "integer", "minimum": 2},
+        "overlength_policy": {"const": "reject"},
+        "packing": {"const": false},
+        "golden_token_tests_required": {"const": true}
+      }
+    },
+    "compactAnnModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation",
+        "initialization",
+        "vocabulary_size",
+        "maximum_sequence_length",
+        "model_dimension",
+        "layer_count",
+        "query_head_count",
+        "key_value_head_count",
+        "head_dimension",
+        "query_key_normalization",
+        "feed_forward_dimension",
+        "simulation_steps",
+        "spiking",
+        "rms_epsilon",
+        "rope_base",
+        "runtime_dtype",
+        "trainable_parameters"
+      ],
+      "properties": {
+        "implementation": {"const": "snnbase.language.Decoder/v1"},
+        "initialization": {"const": "deterministic_random"},
+        "vocabulary_size": {"const": 151936},
+        "maximum_sequence_length": {"type": "integer", "minimum": 2},
+        "model_dimension": {"type": "integer", "minimum": 1},
+        "layer_count": {"type": "integer", "minimum": 1},
+        "query_head_count": {"type": "integer", "minimum": 1},
+        "key_value_head_count": {"type": "integer", "minimum": 1},
+        "head_dimension": {"type": "integer", "minimum": 1},
+        "query_key_normalization": {"const": false},
+        "feed_forward_dimension": {"type": "integer", "minimum": 1},
+        "simulation_steps": {"type": "integer", "minimum": 1},
+        "spiking": {"const": false},
+        "rms_epsilon": {"type": "number", "exclusiveMinimum": 0},
+        "rope_base": {"type": "number", "exclusiveMinimum": 0},
+        "runtime_dtype": {"const": "float32"},
+        "trainable_parameters": {"const": "all"}
+      }
+    },
+    "compactSnnModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation",
+        "initialization",
+        "vocabulary_size",
+        "maximum_sequence_length",
+        "model_dimension",
+        "layer_count",
+        "query_head_count",
+        "key_value_head_count",
+        "head_dimension",
+        "query_key_normalization",
+        "feed_forward_dimension",
+        "simulation_steps",
+        "spiking",
+        "rms_epsilon",
+        "rope_base",
+        "runtime_dtype",
+        "trainable_parameters",
+        "attention",
+        "spiking_scope",
+        "claim_scope"
+      ],
+      "properties": {
+        "implementation": {"const": "snnbase.language.Decoder/v1"},
+        "initialization": {"const": "deterministic_random"},
+        "vocabulary_size": {"const": 151936},
+        "maximum_sequence_length": {"type": "integer", "minimum": 2},
+        "model_dimension": {"type": "integer", "minimum": 1},
+        "layer_count": {"type": "integer", "minimum": 1},
+        "query_head_count": {"type": "integer", "minimum": 1},
+        "key_value_head_count": {"type": "integer", "minimum": 1},
+        "head_dimension": {"type": "integer", "minimum": 1},
+        "query_key_normalization": {"const": false},
+        "feed_forward_dimension": {"type": "integer", "minimum": 1},
+        "simulation_steps": {"type": "integer", "minimum": 1},
+        "spiking": {"const": true},
+        "rms_epsilon": {"type": "number", "exclusiveMinimum": 0},
+        "rope_base": {"type": "number", "exclusiveMinimum": 0},
+        "runtime_dtype": {"const": "float32"},
+        "trainable_parameters": {"const": "all"},
+        "attention": {"const": "dense_gqa_control"},
+        "spiking_scope": {
+          "const": ["attention_output_activation", "mlp_intermediate_activation"]
+        },
+        "claim_scope": {"const": "hybrid_snn_not_fully_event_driven"}
+      }
+    },
+    "compactSpiking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "neuron",
+        "time_steps",
+        "threshold",
+        "learn_threshold",
+        "leak",
+        "learn_leak",
+        "signed_spikes",
+        "surrogate",
+        "surrogate_slope",
+        "spike_rate_target",
+        "spike_rate_penalty"
+      ],
+      "properties": {
+        "neuron": {"const": "lif"},
+        "time_steps": {"type": "integer", "minimum": 1},
+        "threshold": {"type": "number", "exclusiveMinimum": 0},
+        "learn_threshold": {"const": true},
+        "leak": {"type": "number", "minimum": 0, "maximum": 1},
+        "learn_leak": {"const": true},
+        "signed_spikes": {"const": true},
+        "surrogate": {"const": "sigmoid"},
+        "surrogate_slope": {"type": "number", "exclusiveMinimum": 0},
+        "spike_rate_target": {"type": "number", "minimum": 0, "maximum": 1},
+        "spike_rate_penalty": {"type": "number", "minimum": 0}
+      }
+    },
+    "training": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objective",
+        "loss_scope",
+        "assistant_only_loss",
+        "epochs",
+        "micro_batch_size",
+        "gradient_accumulation_steps",
+        "optimizer",
+        "learning_rate",
+        "weight_decay",
+        "gradient_clip_norm",
+        "scheduler",
+        "mixed_precision",
+        "checkpoint_selection",
+        "test_policy"
+      ],
+      "properties": {
+        "objective": {"const": "causal_language_modeling"},
+        "loss_scope": {"const": "assistant_content_and_eom"},
+        "assistant_only_loss": {"const": true},
+        "epochs": {"type": "integer", "minimum": 1},
+        "micro_batch_size": {"const": 1},
+        "gradient_accumulation_steps": {"type": "integer", "minimum": 1},
+        "optimizer": {"const": "adamw"},
+        "learning_rate": {"type": "number", "exclusiveMinimum": 0},
+        "weight_decay": {"type": "number", "minimum": 0},
+        "gradient_clip_norm": {"type": "number", "exclusiveMinimum": 0},
+        "scheduler": {"const": "constant"},
+        "mixed_precision": {"const": false},
+        "checkpoint_selection": {"const": "lowest_validation_loss_including_epoch_0"},
+        "test_policy": {"const": "reload_selected_checkpoint_in_second_process_then_evaluate_test_once"}
+      }
+    },
+    "runnerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entrypoint", "device", "arguments"],
+      "properties": {
+        "entrypoint": {"const": "chatbot_experiment serve"},
+        "device": {"enum": ["auto", "cpu", "cuda"]},
+        "arguments": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+        }
+      }
+    },
+    "metricNames": {
+      "const": [
+        "assistant_token_loss",
+        "assistant_token_perplexity",
+        "assistant_token_accuracy",
+        "mean_spike_rate"
+      ]
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["do_sample", "maximum_new_tokens"],
+      "properties": {
+        "do_sample": {"const": false},
+        "maximum_new_tokens": {"type": "integer", "minimum": 1}
+      }
+    },
+    "compactAnnEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["driver_reported_metrics", "generation"],
+      "properties": {
+        "driver_reported_metrics": {"$ref": "#/$defs/metricNames"},
+        "generation": {"$ref": "#/$defs/generation"}
+      }
+    },
+    "compactSnnEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "driver_reported_metrics",
+        "generation",
+        "energy_claim_requires_measured_target_hardware"
+      ],
+      "properties": {
+        "driver_reported_metrics": {"$ref": "#/$defs/metricNames"},
+        "generation": {"$ref": "#/$defs/generation"},
+        "energy_claim_requires_measured_target_hardware": {"const": true}
+      }
+    },
+    "publicationGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_schema",
+        "require_clean_repositories",
+        "require_dataset_sha256",
+        "require_config_sha256",
+        "require_executable_sha256",
+        "require_consumed_model_file_sha256",
+        "require_checkpoint_sha256",
+        "require_nonempty_test_split"
+      ],
+      "properties": {
+        "manifest_schema": {"const": "snnbase-chatbot-run-v1"},
+        "require_clean_repositories": {"const": true},
+        "require_dataset_sha256": {"const": true},
+        "require_config_sha256": {"const": true},
+        "require_executable_sha256": {"const": true},
+        "require_consumed_model_file_sha256": {"const": true},
+        "require_checkpoint_sha256": {"const": true},
+        "require_nonempty_test_split": {"const": true}
+      }
+    },
+    "archive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "format_version",
+        "path",
+        "size_bytes",
+        "sha256",
+        "metadata_sha256",
+        "payload_sha256",
+        "dense_tensor_count",
+        "dense_tensor_bytes",
+        "runtime_lif_parameter_count_not_in_archive"
+      ],
+      "properties": {
+        "format": {"const": "snnbase-qwen-dense-archive"},
+        "format_version": {"const": 1},
+        "path": {"$ref": "#/$defs/nonemptyString"},
+        "size_bytes": {"const": 1192143104},
+        "sha256": {"const": "333c8be1b3fde5013ee8d1dcb96f23051dd934f8e1f359aff329e7e5cf8ccac8"},
+        "metadata_sha256": {"const": "8166a9145703344c857d863ac006e5933ee74fa2818dc6c7331b467b37535977"},
+        "payload_sha256": {"const": "3ff89d9835a2c58356dc3ef8ee756297410e386c83d97094ba468056ce1a3924"},
+        "dense_tensor_count": {"const": 310},
+        "dense_tensor_bytes": {"const": 1192099840},
+        "runtime_lif_parameter_count_not_in_archive": {"const": 112}
+      }
+    },
+    "exactAnnModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation",
+        "initialization",
+        "vocabulary_size",
+        "maximum_position_embeddings",
+        "maximum_sequence_length",
+        "execution_context_tokens",
+        "model_dimension",
+        "layer_count",
+        "query_head_count",
+        "key_value_head_count",
+        "head_dimension",
+        "query_projection_dimension",
+        "key_value_projection_dimension",
+        "query_key_normalization",
+        "feed_forward_dimension",
+        "hidden_activation",
+        "attention_bias",
+        "sliding_window",
+        "tied_output_projection",
+        "rms_epsilon",
+        "rope_base",
+        "source_dtype",
+        "runtime_dtype",
+        "oracle_runtime_dtype",
+        "simulation_steps",
+        "simulation_steps_configured_but_bypassed",
+        "spiking",
+        "trainable_parameters"
+      ],
+      "properties": {
+        "implementation": {"const": "snnbase.language.Decoder/v1"},
+        "initialization": {"const": "verified_qwen_dense_archive_v1"},
+        "vocabulary_size": {"const": 151936},
+        "maximum_position_embeddings": {"const": 32768},
+        "maximum_sequence_length": {"const": 512},
+        "execution_context_tokens": {"const": 512},
+        "model_dimension": {"const": 1024},
+        "layer_count": {"const": 28},
+        "query_head_count": {"const": 16},
+        "key_value_head_count": {"const": 8},
+        "head_dimension": {"const": 128},
+        "query_projection_dimension": {"const": 2048},
+        "key_value_projection_dimension": {"const": 1024},
+        "query_key_normalization": {"const": true},
+        "feed_forward_dimension": {"const": 3072},
+        "hidden_activation": {"const": "silu_swiglu"},
+        "attention_bias": {"const": false},
+        "sliding_window": {"const": false},
+        "tied_output_projection": {"const": true},
+        "rms_epsilon": {"const": 0.000001},
+        "rope_base": {"const": 1000000.0},
+        "source_dtype": {"const": "bfloat16"},
+        "runtime_dtype": {"const": "float32"},
+        "oracle_runtime_dtype": {"const": "float32"},
+        "simulation_steps": {"const": 4},
+        "simulation_steps_configured_but_bypassed": {"const": 4},
+        "spiking": {"const": false},
+        "trainable_parameters": {"const": "all"}
+      }
+    },
+    "exactSnnModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementation",
+        "initialization",
+        "vocabulary_size",
+        "maximum_position_embeddings",
+        "maximum_sequence_length",
+        "execution_context_tokens",
+        "model_dimension",
+        "layer_count",
+        "query_head_count",
+        "key_value_head_count",
+        "head_dimension",
+        "query_projection_dimension",
+        "key_value_projection_dimension",
+        "query_key_normalization",
+        "feed_forward_dimension",
+        "hidden_activation",
+        "attention_bias",
+        "sliding_window",
+        "tied_output_projection",
+        "rms_epsilon",
+        "rope_base",
+        "source_dtype",
+        "runtime_dtype",
+        "trainable_parameters",
+        "spiking",
+        "simulation_steps",
+        "attention",
+        "spiking_scope",
+        "claim_scope"
+      ],
+      "properties": {
+        "implementation": {"const": "snnbase.language.Decoder/v1"},
+        "initialization": {"const": "verified_qwen_dense_archive_plus_decoder_config_lif_parameters"},
+        "vocabulary_size": {"const": 151936},
+        "maximum_position_embeddings": {"const": 32768},
+        "maximum_sequence_length": {"const": 512},
+        "execution_context_tokens": {"const": 512},
+        "model_dimension": {"const": 1024},
+        "layer_count": {"const": 28},
+        "query_head_count": {"const": 16},
+        "key_value_head_count": {"const": 8},
+        "head_dimension": {"const": 128},
+        "query_projection_dimension": {"const": 2048},
+        "key_value_projection_dimension": {"const": 1024},
+        "query_key_normalization": {"const": true},
+        "feed_forward_dimension": {"const": 3072},
+        "hidden_activation": {"const": "silu_swiglu"},
+        "attention_bias": {"const": false},
+        "sliding_window": {"const": false},
+        "tied_output_projection": {"const": true},
+        "rms_epsilon": {"const": 0.000001},
+        "rope_base": {"const": 1000000.0},
+        "source_dtype": {"const": "bfloat16"},
+        "runtime_dtype": {"const": "float32"},
+        "trainable_parameters": {"const": "all"},
+        "spiking": {"const": true},
+        "simulation_steps": {"type": "integer", "minimum": 1},
+        "attention": {"const": "dense_gqa_control"},
+        "spiking_scope": {
+          "const": ["attention_output_activation", "mlp_intermediate_activation"]
+        },
+        "claim_scope": {"const": "hybrid_snn_not_fully_event_driven"}
+      }
+    },
+    "exactSpiking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "neuron",
+        "time_steps",
+        "threshold_initialization",
+        "learn_threshold",
+        "leak_initialization",
+        "learn_leak",
+        "signed_spikes",
+        "surrogate",
+        "surrogate_slope",
+        "spike_rate_target",
+        "spike_rate_penalty",
+        "source"
+      ],
+      "properties": {
+        "neuron": {"const": "lif"},
+        "time_steps": {"type": "integer", "minimum": 1},
+        "threshold_initialization": {"type": "number", "exclusiveMinimum": 0},
+        "learn_threshold": {"const": true},
+        "leak_initialization": {"type": "number", "minimum": 0, "maximum": 1},
+        "learn_leak": {"const": true},
+        "signed_spikes": {"const": true},
+        "surrogate": {"const": "sigmoid"},
+        "surrogate_slope": {"type": "number", "exclusiveMinimum": 0},
+        "spike_rate_target": {"type": "number", "minimum": 0, "maximum": 1},
+        "spike_rate_penalty": {"type": "number", "minimum": 0},
+        "source": {"const": "runtime_decoder_config_not_qwen_checkpoint"}
+      }
+    },
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixture",
+        "operation",
+        "comparison",
+        "case_count",
+        "device",
+        "dtype",
+        "absolute_tolerance",
+        "relative_tolerance",
+        "maximum_absolute_error",
+        "maximum_relative_error",
+        "wall_seconds",
+        "peak_rss_kibibytes",
+        "build_type",
+        "compiler",
+        "torch",
+        "runtime_library_path",
+        "status"
+      ],
+      "properties": {
+        "fixture": {"$ref": "#/$defs/nonemptyString"},
+        "operation": {"const": "inspect"},
+        "comparison": {"const": "exact_probe_ids_and_ordered_top_16_ids_plus_logit_tolerance"},
+        "case_count": {"type": "integer", "minimum": 1},
+        "device": {"enum": ["cpu", "cuda"]},
+        "dtype": {"const": "float32"},
+        "absolute_tolerance": {"type": "number", "exclusiveMinimum": 0},
+        "relative_tolerance": {"type": "number", "exclusiveMinimum": 0},
+        "maximum_absolute_error": {"type": "number", "minimum": 0},
+        "maximum_relative_error": {"type": "number", "minimum": 0},
+        "wall_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "peak_rss_kibibytes": {"type": "integer", "minimum": 1},
+        "build_type": {"enum": ["Debug", "Release"]},
+        "compiler": {"$ref": "#/$defs/nonemptyString"},
+        "torch": {"$ref": "#/$defs/nonemptyString"},
+        "runtime_library_path": {"$ref": "#/$defs/nonemptyString"},
+        "status": {"const": "passed_local_ignored_development_run_not_promoted"}
+      }
+    },
+    "exactAnnClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["established_locally", "not_established"],
+      "properties": {
+        "established_locally": {"$ref": "#/$defs/nonemptyString"},
+        "not_established": {"$ref": "#/$defs/stringList"}
+      }
+    },
+    "exactSnnClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["permitted", "not_established"],
+      "properties": {
+        "permitted": {"$ref": "#/$defs/nonemptyString"},
+        "not_established": {"$ref": "#/$defs/stringList"}
+      }
+    }
+  }
+}
