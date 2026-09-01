@@ -90,6 +90,80 @@ branches.
   checkpoint digest, dataset checksums, and both gate outputs are retained in
   `results/spaun/learned-a1-2026-08-20/`.
 
+## Chatbot Phase 0 status
+
+Snapshot date: 2026-09-01
+
+The track is now split explicitly:
+
+1. Exact Qwen ANN import/parity and hybrid SNN conversion. The deterministic
+   converter maps the pinned Qwen3-0.6B-Base checkpoint into a versioned dense
+   archive; the C++ loader validates provenance, geometry, tensor coverage, and
+   hashes. ANN mode bypasses LIF for oracle comparison. SNN mode imports the
+   same 310 dense tensors and initializes 112 experiment-owned threshold/leak
+   parameters for two LIF sites in each of 28 layers.
+2. Compact trainable ANN/SNN controls. These retain the tokenizer and data
+   contracts but use a 256-wide, four-layer topology with random
+   initialization. Current checkpoint signatures include spiking mode, so a
+   compact ANN checkpoint cannot yet be transplanted into compact SNN mode;
+   they are independently trainable controls.
+
+Implemented plumbing and reference artifacts include strict UTF-8 conversation
+validation, assistant-only labels, the cross-language
+`sha256-seed-bucket-v1` split golden, content-hashed prepared shards, portable
+SHA-256, the bounded persistent token protocol, a fail-closed run schema,
+immutable Qwen pins and reference fixtures, Qwen inventory/conversion/import,
+bounded `inspect`, the oracle gate, the LibTorch runner/checkpoint API, the
+interactive official-template client, and offline contract/smoke tests.
+
+The training driver now flushes at epoch boundaries, considers epoch-zero
+validation, selects only on lowest validation loss, reloads the selected
+checkpoint in a second core process, validates immutable metadata and restored
+training counters, reproduces the selected validation aggregate, and then
+evaluates the test shard once. The loader also recomputes every record's
+deterministic split instead of trusting a self-consistent manifest. This
+orchestration is covered by adversarial fake-core tests and was exercised in a
+local ignored three-record CPU SNN wiring run using the real tokenizer and C++
+core. That run is not an approved-dataset quality result. The training driver
+now validates and consumes all four checked JSON configs, binds their canonical
+runner argument lists, and records the consumed config hash in its run summary.
+The publication assembler revalidates that binding and emits the separate
+schema-checked durable run manifest. The executable reports the configure-time
+experiment and library revisions/dirty flags, and publishable assembly requires
+the current clean checkouts to match that embedded provenance.
+
+A local ignored development archive was produced from the exact checkpoint:
+1,192,143,104 bytes, SHA-256
+`333c8be1b3fde5013ee8d1dcb96f23051dd934f8e1f359aff329e7e5cf8ccac8`,
+with 310 dense tensors. The real three-case CPU float32 gate passed exact probe
+IDs and ordered top-16 IDs with maximum absolute error
+`9.5367431640625e-06` and maximum relative error
+`8.471997478955767e-06` at `atol=rtol=1e-5`. It took 57.60 seconds and peak RSS
+was 3,344,712 KiB. This was a local ignored development gate, not a promoted
+durable result. The Release executable used `/usr/bin/c++` and the CPU
+PyTorch/LibTorch 2.7.1+cpu installation under the conversion environment, with
+its matching Torch `LD_LIBRARY_PATH`; it was not the older 2.3 dependency
+matrix.
+
+The language backend is committed and published at the clean `snnbase` revision
+`c282306ee3b80ccc5123fcb8b2da78ae51ed09fe`. Its decoder and installed-package
+consumer tests passed with LibTorch 2.3.0 and 2.5.1, and the experiment
+runner/smoke gates passed against the latter. The revision is published on the
+`codex/spiking-chatbot` branch, and the workflow now pins it in a CPU
+LibTorch 2.5.1 chatbot smoke job. That hosted job is a build/protocol gate, not
+model-quality evidence. The existing general non-Torch CI job remains pinned to
+`37abded48777968f112fcd5c66d357d0352d9ff2`; the explicit local
+configure/smoke scripts provide the corresponding reproducible local path.
+
+No conversation dataset has been selected or approved, so no reportable ANN or
+SNN training result, held-out assistant perplexity, or generation-quality
+measurement is available. The completed three-record SNN run is wiring evidence
+only. No latency, power, or energy comparison has been made, and the exact
+hybrid SNN has not been calibrated or evaluated. These remain result gates
+rather than implementation claims. See
+[`CHATBOT_EXPERIMENT.md`](CHATBOT_EXPERIMENT.md) and
+[`results/CHATBOT_BASELINE.md`](results/CHATBOT_BASELINE.md).
+
 ## Temporal toolchain gate
 
 The installed PyTorch 2.5.1+cu121 CMake package requires a matching CUDA 12.1
@@ -115,15 +189,10 @@ The checked-in GitHub Actions workflow also defines a CPU-only
 `temporal-container-test` job that repeats this build and CTest gate once the
 pinned library revision is published.
 
-## Current constraints
+## Manifest paths
 
-- Library edits require elevated workspace access to
-  `/home/dean/repos/snnbase`; that access has now been granted for this run.
-- Existing user changes must remain intact and must not be broadly staged or
-  discarded.
-
-The initial manifest writer is available at
-`scripts/write_run_manifest.sh`. It records both repository revisions and dirty
-flags, toolchain versions, the command, and SHA-256 hashes for supplied dataset
-directories. Promoted runs must still add resolved configuration, seed, metrics,
-checkpoint, and hardware fields.
+Legacy non-chatbot experiments can use `scripts/write_run_manifest.sh` for a
+basic command/revision/dataset record. Chatbot runs use
+`tools/chatbot_publish.py`, whose schema-bound manifest additionally verifies
+the resolved configuration, executable build provenance, prepared shards,
+selected checkpoint, metrics stream, Qwen assets, and retained environment.

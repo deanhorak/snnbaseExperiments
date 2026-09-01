@@ -15,6 +15,11 @@ option(
   ON
 )
 option(
+  SNNBASE_EXPERIMENTS_ENABLE_CHATBOT
+  "Build the LibTorch hybrid spiking causal-language-model experiment"
+  OFF
+)
+option(
   SNNBASE_EXPERIMENTS_ENABLE_GUI
   "Build optional native experiment GUIs when their dependencies are available"
   ON
@@ -161,10 +166,18 @@ message(
 
 set(SNNBASE_BUILD_TESTS OFF CACHE BOOL "Build snnbase's own tests")
 set(SNNBASE_BUILD_EXAMPLES OFF CACHE BOOL "Build snnbase's own examples")
+if(
+  SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL OR
+  SNNBASE_EXPERIMENTS_ENABLE_CHATBOT
+)
+  set(_snnbase_experiments_needs_torch ON)
+else()
+  set(_snnbase_experiments_needs_torch OFF)
+endif()
 set(
   SNNBASE_ENABLE_TORCH
-  ${SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL}
-  CACHE BOOL "Build snnbase's temporal residual backend"
+  ${_snnbase_experiments_needs_torch}
+  CACHE BOOL "Build snnbase's LibTorch backends" FORCE
 )
 set(SNNBASE_SPIKE_EVENT_BITS 128 CACHE STRING "Spike-event bit width")
 set(SNNBASE_HISTORY_LENGTH 256 CACHE STRING "Prototype queue depth per class")
@@ -173,6 +186,9 @@ add_subdirectory("${SNNBASE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/_deps/snnbase")
 
 add_library(
   snnbase_experiments
+  src/chatbot/conversation.cpp
+  src/chatbot/dataset.cpp
+  src/chatbot/manifest.cpp
   src/cifar10.cpp
   src/emnist.cpp
   src/mnist.cpp
@@ -187,6 +203,14 @@ add_library(
 if(SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL)
   target_sources(snnbase_experiments PRIVATE src/spiking_conv.cpp)
 endif()
+if(SNNBASE_EXPERIMENTS_ENABLE_CHATBOT)
+  target_sources(
+    snnbase_experiments
+    PRIVATE
+      src/chatbot/qwen_weights.cpp
+      src/chatbot/runner.cpp
+  )
+endif()
 add_library(snnbase_experiments::snnbase_experiments ALIAS snnbase_experiments)
 target_compile_features(snnbase_experiments PUBLIC cxx_std_20)
 target_include_directories(
@@ -200,6 +224,9 @@ target_link_libraries(
 )
 if(SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL)
   target_link_libraries(snnbase_experiments PUBLIC snnbase::temporal)
+endif()
+if(SNNBASE_EXPERIMENTS_ENABLE_CHATBOT)
+  target_link_libraries(snnbase_experiments PUBLIC snnbase::language)
 endif()
 
 add_executable(mnist_experiment experiments/mnist/main.cpp)
@@ -248,6 +275,13 @@ if(SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL)
   add_executable(cifar10_deep experiments/cifar10/deep_main.cpp)
   target_link_libraries(cifar10_deep PRIVATE snnbase_experiments::snnbase_experiments)
 endif()
+if(SNNBASE_EXPERIMENTS_ENABLE_CHATBOT)
+  add_executable(chatbot_experiment experiments/chatbot/main.cpp)
+  target_link_libraries(
+    chatbot_experiment
+    PRIVATE snnbase_experiments::snnbase_experiments
+  )
+endif()
 configure_file(
   cmake/project_config.hpp.in
   generated/snnbase_experiments/project_config.hpp
@@ -277,6 +311,11 @@ if(SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL)
   target_include_directories(emnist_deep PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_include_directories(cifar10_deep PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 endif()
+if(SNNBASE_EXPERIMENTS_ENABLE_CHATBOT)
+  target_include_directories(
+    chatbot_experiment PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated"
+  )
+endif()
 
 if(MSVC)
   target_compile_options(snnbase_experiments PRIVATE /W4 /WX)
@@ -293,6 +332,9 @@ if(MSVC)
   if(SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL)
     target_compile_options(emnist_deep PRIVATE /W4 /WX)
     target_compile_options(cifar10_deep PRIVATE /W4 /WX)
+  endif()
+  if(SNNBASE_EXPERIMENTS_ENABLE_CHATBOT)
+    target_compile_options(chatbot_experiment PRIVATE /W4 /WX)
   endif()
 else()
   target_compile_options(snnbase_experiments PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -316,9 +358,80 @@ else()
     target_compile_options(emnist_deep PRIVATE -Wall -Wextra -Wpedantic -Werror)
     target_compile_options(cifar10_deep PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
+  if(SNNBASE_EXPERIMENTS_ENABLE_CHATBOT)
+    target_compile_options(
+      chatbot_experiment PRIVATE -Wall -Wextra -Wpedantic -Werror
+    )
+  endif()
 endif()
 
 if(BUILD_TESTING)
+  add_executable(chatbot_dataset_tests tests/chatbot_dataset_tests.cpp)
+  target_link_libraries(
+    chatbot_dataset_tests
+    PRIVATE snnbase_experiments::snnbase_experiments
+  )
+  add_executable(chatbot_manifest_tests tests/chatbot_manifest_tests.cpp)
+  target_link_libraries(
+    chatbot_manifest_tests
+    PRIVATE snnbase_experiments::snnbase_experiments
+  )
+  if(MSVC)
+    target_compile_options(chatbot_dataset_tests PRIVATE /W4 /WX)
+    target_compile_options(chatbot_manifest_tests PRIVATE /W4 /WX)
+  else()
+    target_compile_options(
+      chatbot_dataset_tests PRIVATE -Wall -Wextra -Wpedantic -Werror
+    )
+    target_compile_options(
+      chatbot_manifest_tests PRIVATE -Wall -Wextra -Wpedantic -Werror
+    )
+  endif()
+  add_test(NAME chatbot_dataset_tests COMMAND chatbot_dataset_tests)
+  add_test(NAME chatbot_manifest_tests COMMAND chatbot_manifest_tests)
+  set_tests_properties(
+    chatbot_dataset_tests
+    chatbot_manifest_tests
+    PROPERTIES LABELS "chatbot;unit"
+  )
+
+  if(SNNBASE_EXPERIMENTS_ENABLE_CHATBOT)
+    add_executable(chatbot_runner_tests tests/chatbot_runner_tests.cpp)
+    add_executable(
+      chatbot_qwen_weights_tests
+      tests/chatbot_qwen_weights_tests.cpp
+    )
+    target_link_libraries(
+      chatbot_runner_tests
+      PRIVATE snnbase_experiments::snnbase_experiments
+    )
+    target_link_libraries(
+      chatbot_qwen_weights_tests
+      PRIVATE snnbase_experiments::snnbase_experiments
+    )
+    if(MSVC)
+      target_compile_options(chatbot_runner_tests PRIVATE /W4 /WX)
+      target_compile_options(chatbot_qwen_weights_tests PRIVATE /W4 /WX)
+    else()
+      target_compile_options(
+        chatbot_runner_tests PRIVATE -Wall -Wextra -Wpedantic -Werror
+      )
+      target_compile_options(
+        chatbot_qwen_weights_tests
+        PRIVATE -Wall -Wextra -Wpedantic -Werror
+      )
+    endif()
+    add_test(NAME chatbot_runner_tests COMMAND chatbot_runner_tests)
+    add_test(NAME chatbot_qwen_weights_tests COMMAND chatbot_qwen_weights_tests)
+    add_test(NAME chatbot_cli_smoke COMMAND chatbot_experiment self-test)
+    set_tests_properties(
+      chatbot_runner_tests
+      chatbot_qwen_weights_tests
+      chatbot_cli_smoke
+      PROPERTIES LABELS "chatbot;smoke;temporal-cpu" TIMEOUT 120
+    )
+  endif()
+
   add_executable(spaun_tests tests/spaun_tests.cpp)
   target_link_libraries(spaun_tests PRIVATE snnbase_experiments::snnbase_experiments)
   if(MSVC)

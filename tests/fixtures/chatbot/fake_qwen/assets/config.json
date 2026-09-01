@@ -1,0 +1,7 @@
+{
+  "architectures": [
+    "FakeQwenForCausalLM"
+  ],
+  "model_type": "fake_qwen",
+  "vocab_size": 256
+}

@@ -9,6 +9,57 @@ permissions:
   contents: read
 
 jobs:
+  chatbot-contracts-offline:
+    name: Chatbot contracts (offline, no Torch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out experiments
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      # These steps perform no package installation, model download, or
+      # sibling-repository checkout. All fixtures are local to this repository.
+      - name: Run offline Python contract tests
+        run: ./scripts/check_chatbot_contracts.sh python
+
+      - name: Run dependency-free C++ dataset and manifest tests
+        run: ./scripts/check_chatbot_contracts.sh cpp
+
+  chatbot-libtorch-cpu:
+    name: Chatbot LibTorch CPU smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out experiments
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Check out pinned language backend
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: deanhorak/snnbase
+          ref: c282306ee3b80ccc5123fcb8b2da78ae51ed09fe
+          path: dependencies/snnbase
+
+      - name: Install pinned CPU LibTorch package
+        run: >-
+          python3 -m pip install --no-cache-dir
+          torch==2.5.1
+          --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Configure clean pinned pair
+        run: |
+          torch_prefix="$(python3 -c 'from pathlib import Path; import torch; print(Path(torch.__file__).parent / "share" / "cmake")')"
+          ./scripts/configure_chatbot.sh \
+            --snnbase-source "$GITHUB_WORKSPACE/dependencies/snnbase" \
+            --snnbase-revision c282306ee3b80ccc5123fcb8b2da78ae51ed09fe \
+            --torch-prefix "$torch_prefix" \
+            --build-dir build-chatbot-ci \
+            --build-type Release \
+            --toolchain none
+
+      - name: Build and run chatbot smoke gates
+        run: ./scripts/run_chatbot_smoke.sh --build-dir build-chatbot-ci
+
   build-and-test:
     runs-on: ubuntu-latest
     steps:
@@ -19,7 +70,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: deanhorak/snnbase
-          # This revision must be published before enabling the workflow on GitHub.
+          # Published non-Torch pin. It does not contain the chatbot language
+          # backend; see docs/IMPLEMENTATION_STATUS.md.
           ref: 37abded48777968f112fcd5c66d357d0352d9ff2
           path: dependencies/snnbase
 

@@ -1,0 +1,396 @@
+# Chatbot experiment contract
+
+This document defines the Phase 0 conversational-language work as two distinct
+tracks. Neither track currently establishes chatbot quality or an energy
+advantage.
+
+| Track | Checked configurations | Purpose | Current evidence |
+|---|---|---|---|
+| Exact Qwen import | [`qwen3-0.6b-ann-import.json`](../configs/chatbot/qwen3-0.6b-ann-import.json), [`qwen3-0.6b-hybrid-snn.json`](../configs/chatbot/qwen3-0.6b-hybrid-snn.json) | Prove faithful dense Qwen import in ANN mode, then use the same dense tensors with experiment-owned LIF dynamics | Conversion/import and the bounded oracle path exist. A local ignored three-case ANN gate passed; it is not a promoted result. The hybrid SNN has not been calibrated, trained, or evaluated. |
+| Compact trainable controls | [`ann-baseline.json`](../configs/chatbot/ann-baseline.json), [`snn-baseline.json`](../configs/chatbot/snn-baseline.json) | Exercise seeded, provenance-controlled ANN/SNN training at feasible scale | Prepare/train/checkpoint-selection plumbing exists and is tested with fixtures plus a tiny local CPU wiring run. No approved conversation dataset or full quality run exists. |
+
+The SNNs are activation-first hybrids. Attention, projections, normalization,
+embedding, and readout remain dense; only attention-output and feed-forward
+intermediate activations pass through LIF sites. “Hybrid SNN” does not mean a
+fully asynchronous model and does not support a hardware-energy claim.
+
+## Current implementation boundary
+
+Implemented:
+
+- strict conversation JSONL validation, assistant-only masking, deterministic
+  splitting, immutable prepared shards, and fail-closed provenance checks;
+- a bounded persistent C++ token protocol supporting metadata, train,
+  evaluate, generate, final-position logit inspection, flush, reset, and
+  shutdown operations;
+- a deterministic Qwen dense archive converter and a loader that validates the
+  archive, source checkpoint, config, tokenizer fingerprint, tensor names, and
+  shapes before copying weights;
+- a CPU float32 Qwen oracle gate over bounded final-position probes and ordered
+  top-k logits;
+- deterministic epoch orchestration, an epoch-zero validation candidate,
+  validation-loss-only checkpoint selection, reload in a second process, and a
+  single test evaluation of the selected checkpoint; and
+- an interactive client using the verified official Qwen chat template.
+
+Not established:
+
+- a selected and licensed conversation dataset;
+- full ANN or SNN training, held-out perplexity, or generation quality;
+- SNN calibration or fine-tuning after exact dense Qwen import;
+- a promoted, durable exact-import oracle artifact; or
+- comparative latency, power, or energy evidence.
+
+The JSON configs are executable contracts. `chatbot_train.py --config` validates
+each document against the checked schema, derives the canonical core argument
+array without shell parsing, and records the exact config hash in the completed
+run. The C++ core receives that resolved argument array; promoted manifests
+independently verify it against the selected config.
+
+## Immutable Qwen contract
+
+Phase 0 uses the official text-only pretrained
+[`Qwen/Qwen3-0.6B-Base`](https://huggingface.co/Qwen/Qwen3-0.6B-Base) assets:
+
+| Field | Required value |
+|---|---|
+| Repository | `Qwen/Qwen3-0.6B-Base` |
+| Revision | `da87bfb608c14b7cf20ba1ce41287e8de496c0cd` |
+| License | Apache-2.0 |
+| `config.json` SHA-256 | `504a6b58c4271583724e66584b6b7698aea18450209df6b2f7582df0e89cee59` |
+| `model.safetensors` SHA-256 | `cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba` |
+| `tokenizer.json` SHA-256 | `c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539` |
+| `tokenizer_config.json` SHA-256 | `3c04ed3ca964ea2f6b2b5faf0dc4d31aec1cb1e8b4bcf63f402d295046b422b5` |
+| Tokenizer fingerprint | `6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237` |
+
+These values were resolved from the official repository on 2026-09-01. A
+mutable branch, abbreviated revision, mismatched tokenizer, or unverified
+weight file fails closed.
+
+Install the locked reference environment, download the exact revision, and
+verify both tokenizer and bounded CPU reference fixtures with:
+
+```bash
+python3 -m venv .venv-chatbot-reference
+.venv-chatbot-reference/bin/pip install -r requirements/qwen-reference.lock
+SNNBASE_REFERENCE_PYTHON=.venv-chatbot-reference/bin/python \
+  ./scripts/download_qwen_assets.sh \
+  --model-id Qwen/Qwen3-0.6B-Base \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd \
+  --expected-tokenizer-fingerprint \
+    6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237 \
+  --output-dir artifacts/chatbot/qwen3-0.6b-base \
+  --include-weights
+SNNBASE_REFERENCE_PYTHON=.venv-chatbot-reference/bin/python \
+  ./scripts/check_qwen_reference.sh \
+  --assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --include-logits
+```
+
+The helper resolves `hf` or `huggingface-cli` from the selected reference
+environment. Network access is used only by the explicit download step; both
+fixture checks then force Hugging Face and Transformers offline modes.
+
+The exact architecture is vocabulary 151,936, model width 1,024, 28 layers,
+16 query heads, 8 key/value heads, explicit head width 128, feed-forward width
+3,072, per-head query/key RMSNorm, tied embedding/readout, SiLU/SwiGLU,
+RMS epsilon `1e-6`, RoPE base 1,000,000, and 32,768 trained positions. The
+Phase 0 executable caps execution at 512 tokens by default. The explicit
+128-wide head means the query projection is 2,048 wide; deriving head width as
+`model_dimension / query_head_count` would be incorrect.
+
+Tokenizer assertions are no automatic BOS, `<|endoftext|>` 151643,
+`<|im_start|>` 151644, and `<|im_end|>` 151645. Generation stops on 151645 or
+151643. The model has 151,936 padded embedding/readout rows while the verified
+tokenizer exposes 151,669 decodable IDs. Every frontend generation request
+therefore binds `sampling_vocabulary_size=151669`, and the core slices logits
+to that range before greedy, top-k, or top-p selection. Code must apply the
+pinned tokenizer artifact and chat template rather than reimplementing BPE or
+template rules.
+
+## Exact dense conversion and parity gate
+
+The networked asset download is a separate step. With the verified snapshot at
+`artifacts/chatbot/qwen3-0.6b-base`, first validate the complete tensor mapping
+without writing payloads:
+
+```bash
+python3 tools/qwen_convert.py inventory \
+  --assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --model-id Qwen/Qwen3-0.6B-Base \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd \
+  --expected-tokenizer-fingerprint \
+    6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237 \
+  --output artifacts/chatbot/qwen3-0.6b-inventory.json
+```
+
+Then write the deterministic archive to a new output directory:
+
+```bash
+python3 tools/qwen_convert.py convert \
+  --assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --model-id Qwen/Qwen3-0.6B-Base \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd \
+  --expected-tokenizer-fingerprint \
+    6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237 \
+  --output-dir artifacts/chatbot/qwen3-0.6b-base-dense-v1
+```
+
+For this source and converter contract, `qwen-dense.snnq` is 1,192,143,104
+bytes with SHA-256
+`333c8be1b3fde5013ee8d1dcb96f23051dd934f8e1f359aff329e7e5cf8ccac8`.
+It contains 310 BF16 dense tensors totaling 1,192,099,840 payload bytes. The
+112 threshold/leak tensors at the two LIF sites in each of 28 layers are not
+Qwen checkpoint tensors and are initialized from the runtime decoder config.
+
+Run the real CPU float32 oracle gate against the checked reference fixture:
+
+```bash
+./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
+  python3 tools/qwen_oracle_gate.py \
+  --runner ./build-chatbot/chatbot_experiment \
+  --archive artifacts/chatbot/qwen3-0.6b-base-dense-v1/qwen-dense.snnq \
+  --archive-sha256 \
+    333c8be1b3fde5013ee8d1dcb96f23051dd934f8e1f359aff329e7e5cf8ccac8 \
+  --reference tests/fixtures/chatbot/qwen3_phase0_reference_logits.json \
+  --output artifacts/chatbot/qwen3-oracle-gate.json
+```
+
+The locally retained ignored development run passed all three cases: probe IDs
+and ordered top-16 IDs matched, maximum absolute error was
+`9.5367431640625e-06`, maximum relative error was
+`8.471997478955767e-06`, and both tolerances were `1e-5`. It took 57.60 seconds
+wall time with peak RSS 3,344,712 KiB. This supports bounded final-position ANN
+logit parity on that machine. It is not full-tensor identity, a committed gate
+artifact, conversational quality, or a promoted baseline.
+
+The hybrid conversion loads the same 310 dense tensors under `--snn` and adds
+the 112 runtime LIF parameters. ANN parity does not transfer through the LIF
+nonlinearity; the hybrid must be calibrated or fine-tuned and evaluated as a
+separate model.
+
+## Dataset and assistant-loss contract
+
+Source data is UTF-8 JSON Lines, one complete conversation per nonempty line:
+
+```json
+{"id":"example-0001","messages":[{"role":"system","content":"Be concise."},{"role":"user","content":"What is 2 + 2?"},{"role":"assistant","content":"4"}]}
+```
+
+Each object contains exactly `id` and `messages`. IDs are nonempty and unique.
+Messages contain exactly `role` and `content`; roles are `system`, `user`, and
+`assistant`. An optional single system message comes first. Remaining turns
+alternate user/assistant, begin with user, and end with assistant. Parsing fails
+closed on invalid UTF-8/JSON, unknown or duplicate fields, bad ordering,
+duplicate IDs, NULs, trailing JSON, and configured resource-limit violations.
+
+`sha256-seed-bucket-v1` hashes `seed as eight-byte big-endian || UTF-8 id`,
+interprets the first eight digest bytes as big-endian, and reduces modulo
+10,000. Buckets 0–999 are test, 1000–1999 validation, and 2000–9999 train. The
+shared golden fixture includes seed 42 plus `conversation-17` mapping to 7457.
+Grouping and near-duplicate checks are still required because ID hashing cannot
+prevent semantic leakage.
+
+Training applies the official chat template with
+`add_generation_prompt=false`. Loss selects assistant content and its
+`<|im_end|>` token only. System/user text, role headers, other control tokens,
+and padding are excluded. The causal loss shifts by one token. Packing is off;
+overlength conversations are rejected rather than truncated.
+
+The source SHA-256 and byte count are accumulated from the exact binary stream
+that is parsed and tokenized. Before the immutable shards are finalized, the
+source pathname is rechecked against that consumed digest; a changed source
+fails instead of attaching new provenance to old tokens.
+
+No dataset has been selected or approved. Before a real run, record its source,
+immutable version, license, policy review, byte count, SHA-256, filtering,
+deduplication, and split counts.
+
+## Prepare and train
+
+After supplying an approved source JSONL, prepare immutable token shards:
+
+```bash
+.venv-chatbot-reference/bin/python tools/chatbot_prepare.py \
+  --assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --model-id Qwen/Qwen3-0.6B-Base \
+  --revision da87bfb608c14b7cf20ba1ce41287e8de496c0cd \
+  --expected-tokenizer-fingerprint \
+    6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237 \
+  --input data/chatbot/conversations.jsonl \
+  --source-uri https://example.org/immutable/conversations-v1.jsonl \
+  --source-version conversations-v1 \
+  --source-license LICENSE-SPDX-ID \
+  --output-dir artifacts/chatbot/prepared-v1 \
+  --max-input-tokens 512
+```
+
+All four resolved configs are strict executable inputs. Each command validates
+the config schema and its architecture/geometry/training-to-runner binding
+before launching the persistent core.
+
+Compact ANN:
+
+```bash
+./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
+  python3 tools/chatbot_train.py \
+  --dataset-dir artifacts/chatbot/prepared-v1 \
+  --run-dir artifacts/chatbot/runs/compact-ann-seed42 \
+  --core-executable ./build-chatbot/chatbot_experiment \
+  --config configs/chatbot/ann-baseline.json
+```
+
+Compact hybrid SNN:
+
+```bash
+./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
+  python3 tools/chatbot_train.py \
+  --dataset-dir artifacts/chatbot/prepared-v1 \
+  --run-dir artifacts/chatbot/runs/compact-snn-seed42 \
+  --core-executable ./build-chatbot/chatbot_experiment \
+  --config configs/chatbot/snn-baseline.json
+```
+
+Exact imported ANN:
+
+```bash
+./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
+  python3 tools/chatbot_train.py \
+  --dataset-dir artifacts/chatbot/prepared-v1 \
+  --run-dir artifacts/chatbot/runs/qwen3-0.6b-ann-seed42 \
+  --core-executable ./build-chatbot/chatbot_experiment \
+  --config configs/chatbot/qwen3-0.6b-ann-import.json
+```
+
+Exact-dense hybrid SNN:
+
+```bash
+./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
+  python3 tools/chatbot_train.py \
+  --dataset-dir artifacts/chatbot/prepared-v1 \
+  --run-dir artifacts/chatbot/runs/qwen3-0.6b-hybrid-snn-seed42 \
+  --core-executable ./build-chatbot/chatbot_experiment \
+  --config configs/chatbot/qwen3-0.6b-hybrid-snn.json
+```
+
+The compact checkpoint contract includes spiking mode, so it correctly rejects
+direct loading of a compact ANN checkpoint into the compact SNN. Until a
+tensor-only transplant is implemented, these are independently initialized
+controls. Neither full-size Qwen training path has been run; resource
+feasibility and optimization quality are unknown.
+
+At each epoch boundary the driver flushes accumulated gradients, compares
+validation loss against the epoch-zero candidate, and preserves only strict
+improvements. It then stops the training process, reloads the selected
+checkpoint into a second process, validates immutable metadata and exact
+training counters, reproduces the selected validation aggregate within a
+deterministic tolerance, and evaluates the test shard once only after those
+checks pass. It independently recomputes every record's deterministic split
+when loading prepared shards. Run directories and outputs are immutable.
+
+## Interactive inference
+
+Exact imported ANN:
+
+```bash
+./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
+  .venv-chatbot-reference/bin/python tools/chatbot_cli.py \
+  --assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --core-executable ./build-chatbot/chatbot_experiment \
+  --qwen-archive artifacts/chatbot/qwen3-0.6b-base-dense-v1/qwen-dense.snnq \
+  --qwen-archive-sha256 \
+    333c8be1b3fde5013ee8d1dcb96f23051dd934f8e1f359aff329e7e5cf8ccac8 \
+  --ann --device cpu \
+  --context-tokens 512 --max-new-tokens 128 \
+  --seed 42 --temperature 0
+```
+
+The Phase 0 pin is a pretrained **Base** model, not an instruction-tuned chat
+checkpoint. The official template makes the interface reproducible, but raw
+interactive generations are plumbing demonstrations until the model is
+fine-tuned and evaluated on an approved conversation corpus.
+
+Use `--snn` for an uncalibrated hybrid smoke only. For a trained compact model,
+replace the Qwen archive arguments with `--checkpoint PATH`, retain the
+512-token context, and pass the checkpoint's `--ann` or `--snn` mode. For an
+exact-geometry Qwen checkpoint, also pass `--qwen3-0.6b`.
+
+`/reset` clears multi-turn history and resets the persistent core; `/quit`
+shuts it down. The client reserves completion space, evicts only whole oldest
+turns, applies configured byte/message limits, invokes no shell, and decodes the
+assistant tokens. Greedy generation is selected by `--temperature 0`; sampled
+requests require fixed seed, temperature, top-k, and top-p, though cross-device
+bitwise determinism is not promised. The wrapper binds both Python and its C++
+child to the `Torch_DIR` recorded in the selected CMake build cache.
+
+## Metrics, manifests, and publication
+
+Training reports target-token-weighted assistant loss, perplexity, accuracy,
+and mean spike rate for each phase. Generated quality, throughput, memory, and
+operation counts require separate measured protocols; they are not emitted by
+the current training summary. Perplexity is
+`exp(total assistant NLL / supervised assistant tokens)`, not an average of
+per-record perplexities.
+
+Every promoted result must conform to
+[`chatbot-run-v1.schema.json`](../schemas/chatbot-run-v1.schema.json) and retain
+full experiment and `snnbase` revisions, dirty state, command, resolved config,
+dataset and split provenance, environment/hardware, and hashes for executable,
+all consumed model/tokenizer files, checkpoints, logs, and metrics. Operation
+counts are not energy. Only direct power/energy measurement on named target
+hardware can support an energy claim.
+
+After a config-driven run completes, assemble and independently validate its
+immutable publication manifest. The environment input is an exact JSON object
+with `toolchain` fields `compiler`, `cmake`, `torch`, and `cuda`, plus `hardware`
+fields `cpu` and `gpu`; use an explicit value such as `"none"` rather than an
+ambiguous empty value in a publishable CPU run.
+
+```bash
+python3 tools/chatbot_publish.py assemble \
+  --run-dir artifacts/chatbot/runs/compact-ann-seed42 \
+  --config configs/chatbot/ann-baseline.json \
+  --dataset-source data/chatbot/conversations.jsonl \
+  --experiments-repo . \
+  --snnbase-repo ../snnbase \
+  --environment artifacts/chatbot/environment.json \
+  --qwen-assets-dir artifacts/chatbot/qwen3-0.6b-base \
+  --run-id compact-ann-seed42 \
+  --dataset-name APPROVED_DATASET_NAME \
+  --output artifacts/chatbot/runs/compact-ann-seed42/publication-manifest.json
+python3 tools/chatbot_publish.py validate \
+  --manifest \
+    artifacts/chatbot/runs/compact-ann-seed42/publication-manifest.json
+```
+
+Add `--publishable` to `assemble` and `--require-publishable` to `validate` only
+for a retained approved-dataset run from clean repository revisions. Assembly
+rechecks the consumed config and command, source/shard hashes and split
+contract, executable, selected checkpoint, one-time test metrics, official
+Qwen/tokenizer assets, environment, and the configure-time Git revisions and
+dirty flags embedded in the executable. Publishable mode also requires the
+current clean checkouts to match those embedded build revisions exactly, so an
+older binary cannot be relabeled with newer source. Output creation is
+exclusive so an existing manifest is never silently overwritten.
+
+The offline implementation gates remain:
+
+```bash
+./scripts/check_chatbot_contracts.sh
+./scripts/configure_chatbot.sh \
+  --snnbase-source /path/to/snnbase \
+  --snnbase-revision c282306ee3b80ccc5123fcb8b2da78ae51ed09fe \
+  --torch-prefix /path/to/libtorch/share/cmake \
+  --build-dir build-chatbot \
+  --build-type Release
+./scripts/run_chatbot_smoke.sh --build-dir build-chatbot
+```
+
+The default toolchain selects the validated CUDA 12.1/GCC 11/SM86 matrix. Add
+`--toolchain none` when `--torch-prefix` names a CPU-only LibTorch build. The
+local ANN parity evidence used the latter kind of Release build with
+PyTorch/LibTorch 2.7.1+cpu; it is deliberately not described as evidence from
+the CUDA 12.1 matrix.
+
+The first reportable-result boundary is tracked in
+[`results/CHATBOT_BASELINE.md`](results/CHATBOT_BASELINE.md).

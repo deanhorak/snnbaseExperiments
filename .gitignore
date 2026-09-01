@@ -2,6 +2,9 @@
 /data/
 /artifacts/
 /.cache/
+/.venv*/
+__pycache__/
+*.py[cod]
 /.idea/
 /.vscode/
 compile_commands.json

@@ -1,0 +1,3 @@
+{"id":"fixture-1","messages":[{"role":"system","content":"Be brief."},{"role":"user","content":"Ping?"},{"role":"assistant","content":"Pong."}]}
+{"id":"fixture-0","messages":[{"role":"user","content":"One word."},{"role":"assistant","content":"Spike."}]}
+{"id":"fixture-4","messages":[{"role":"user","content":"Two letters."},{"role":"assistant","content":"OK"}]}

@@ -1,0 +1,197 @@
+{
+  "schema_version": "snnbase-chatbot-config-v1",
+  "experiment_id": "qwen3-0.6b-exact-ann-import-phase0",
+  "track": "exact_qwen_ann_parity_and_hybrid_snn_conversion",
+  "architecture": "ann",
+  "seed": 42,
+  "implementation_status": {
+    "config_consumed_automatically": true,
+    "dense_conversion": "implemented",
+    "archive_loader": "implemented",
+    "bounded_inspect_protocol": "implemented",
+    "oracle_gate": "passed_local_ignored_development_run_not_promoted",
+    "training": "not_run",
+    "held_out_quality": "not_measured"
+  },
+  "reference": {
+    "repository": "Qwen/Qwen3-0.6B-Base",
+    "revision": "da87bfb608c14b7cf20ba1ce41287e8de496c0cd",
+    "license": "Apache-2.0",
+    "files": {
+      "config.json": "504a6b58c4271583724e66584b6b7698aea18450209df6b2f7582df0e89cee59",
+      "model.safetensors": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
+      "tokenizer.json": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+      "tokenizer_config.json": "3c04ed3ca964ea2f6b2b5faf0dc4d31aec1cb1e8b4bcf63f402d295046b422b5"
+    },
+    "tokenizer_fingerprint_sha256": "6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237"
+  },
+  "dataset": {
+    "path": "data/chatbot/conversations.jsonl",
+    "format": "snnbase-chatbot-jsonl-v1",
+    "selection_status": "not_selected_or_approved",
+    "strict_validation": true,
+    "limits": {
+      "maximum_records": 1000000,
+      "maximum_line_bytes": 4194304,
+      "maximum_id_bytes": 256,
+      "maximum_messages_per_conversation": 128,
+      "maximum_content_bytes_per_message": 1048576
+    },
+    "split": {
+      "algorithm": "sha256-seed-bucket-v1",
+      "seed": 42,
+      "validation_basis_points": 1000,
+      "test_basis_points": 1000
+    }
+  },
+  "tokenization": {
+    "implementation": "official_tokenizer_artifacts",
+    "template_source": "tokenizer_config.json",
+    "add_generation_prompt_during_training": false,
+    "add_bos_token": false,
+    "endoftext_id": 151643,
+    "im_start_id": 151644,
+    "im_end_id": 151645,
+    "assistant_eom_id": 151645,
+    "stop_token_ids": [151645, 151643],
+    "maximum_sequence_tokens": 512,
+    "overlength_policy": "reject",
+    "packing": false,
+    "golden_token_tests_required": true
+  },
+  "archive": {
+    "format": "snnbase-qwen-dense-archive",
+    "format_version": 1,
+    "path": "artifacts/chatbot/qwen3-0.6b-base-dense-v1/qwen-dense.snnq",
+    "size_bytes": 1192143104,
+    "sha256": "333c8be1b3fde5013ee8d1dcb96f23051dd934f8e1f359aff329e7e5cf8ccac8",
+    "metadata_sha256": "8166a9145703344c857d863ac006e5933ee74fa2818dc6c7331b467b37535977",
+    "payload_sha256": "3ff89d9835a2c58356dc3ef8ee756297410e386c83d97094ba468056ce1a3924",
+    "dense_tensor_count": 310,
+    "dense_tensor_bytes": 1192099840,
+    "runtime_lif_parameter_count_not_in_archive": 112
+  },
+  "model": {
+    "implementation": "snnbase.language.Decoder/v1",
+    "initialization": "verified_qwen_dense_archive_v1",
+    "vocabulary_size": 151936,
+    "maximum_position_embeddings": 32768,
+    "maximum_sequence_length": 512,
+    "execution_context_tokens": 512,
+    "model_dimension": 1024,
+    "layer_count": 28,
+    "query_head_count": 16,
+    "key_value_head_count": 8,
+    "head_dimension": 128,
+    "query_projection_dimension": 2048,
+    "key_value_projection_dimension": 1024,
+    "query_key_normalization": true,
+    "feed_forward_dimension": 3072,
+    "hidden_activation": "silu_swiglu",
+    "attention_bias": false,
+    "sliding_window": false,
+    "tied_output_projection": true,
+    "rms_epsilon": 0.000001,
+    "rope_base": 1000000.0,
+    "source_dtype": "bfloat16",
+    "runtime_dtype": "float32",
+    "oracle_runtime_dtype": "float32",
+    "simulation_steps": 4,
+    "simulation_steps_configured_but_bypassed": 4,
+    "spiking": false,
+    "trainable_parameters": "all"
+  },
+  "training": {
+    "objective": "causal_language_modeling",
+    "loss_scope": "assistant_content_and_eom",
+    "assistant_only_loss": true,
+    "epochs": 1,
+    "micro_batch_size": 1,
+    "gradient_accumulation_steps": 1,
+    "optimizer": "adamw",
+    "learning_rate": 0.0003,
+    "weight_decay": 0.01,
+    "gradient_clip_norm": 1.0,
+    "scheduler": "constant",
+    "mixed_precision": false,
+    "checkpoint_selection": "lowest_validation_loss_including_epoch_0",
+    "test_policy": "reload_selected_checkpoint_in_second_process_then_evaluate_test_once"
+  },
+  "runner_binding": {
+    "entrypoint": "chatbot_experiment serve",
+    "device": "cpu",
+    "arguments": [
+      "--qwen3-0.6b",
+      "--qwen-archive",
+      "artifacts/chatbot/qwen3-0.6b-base-dense-v1/qwen-dense.snnq",
+      "--qwen-archive-sha256",
+      "333c8be1b3fde5013ee8d1dcb96f23051dd934f8e1f359aff329e7e5cf8ccac8",
+      "--ann",
+      "--device",
+      "cpu",
+      "--simulation-steps",
+      "4",
+      "--learning-rate",
+      "0.0003",
+      "--weight-decay",
+      "0.01",
+      "--gradient-clip",
+      "1.0",
+      "--gradient-accumulation",
+      "1",
+      "--seed",
+      "42"
+    ]
+  },
+  "oracle": {
+    "fixture": "tests/fixtures/chatbot/qwen3_phase0_reference_logits.json",
+    "operation": "inspect",
+    "comparison": "exact_probe_ids_and_ordered_top_16_ids_plus_logit_tolerance",
+    "case_count": 3,
+    "device": "cpu",
+    "dtype": "float32",
+    "absolute_tolerance": 0.00001,
+    "relative_tolerance": 0.00001,
+    "maximum_absolute_error": 0.0000095367431640625,
+    "maximum_relative_error": 0.000008471997478955767,
+    "wall_seconds": 57.60,
+    "peak_rss_kibibytes": 3344712,
+    "build_type": "Release",
+    "compiler": "/usr/bin/c++",
+    "torch": "PyTorch/LibTorch 2.7.1+cpu",
+    "runtime_library_path": "matching_cpu_torch_LD_LIBRARY_PATH",
+    "status": "passed_local_ignored_development_run_not_promoted"
+  },
+  "evaluation": {
+    "driver_reported_metrics": [
+      "assistant_token_loss",
+      "assistant_token_perplexity",
+      "assistant_token_accuracy",
+      "mean_spike_rate"
+    ],
+    "generation": {
+      "do_sample": false,
+      "maximum_new_tokens": 128
+    }
+  },
+  "publication_gate": {
+    "manifest_schema": "snnbase-chatbot-run-v1",
+    "require_clean_repositories": true,
+    "require_dataset_sha256": true,
+    "require_config_sha256": true,
+    "require_executable_sha256": true,
+    "require_consumed_model_file_sha256": true,
+    "require_checkpoint_sha256": true,
+    "require_nonempty_test_split": true
+  },
+  "claim_boundary": {
+    "established_locally": "exact_dense_weight_import_and_bounded_final_position_logit_parity_with_the_pinned_reference",
+    "not_established": [
+      "full_logit_tensor_identity",
+      "promoted_durable_baseline",
+      "chatbot_quality",
+      "fine_tuning_quality",
+      "latency_or_energy_advantage"
+    ]
+  }
+}
