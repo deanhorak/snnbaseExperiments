@@ -25,6 +25,7 @@ from oasst2_convert import (  # noqa: E402
     PROFILE_QUALITY05,
     ConversionLimits,
     ConversionPolicy,
+    LeakageRemediation,
     Oasst2ConversionError,
     TokenizerIdentity,
     build_parser,
@@ -182,6 +183,7 @@ class Oasst2ConvertTests(unittest.TestCase):
         maximum_input_tokens: int = 512,
         maximum_conversation_content_bytes: int = 32 * 1024,
         output_name: str = "converted",
+        leakage_remediation: LeakageRemediation | None = None,
         limits: ConversionLimits = ConversionLimits(),
     ) -> tuple[dict[str, Any], Path, Path, FakeTokenizer]:
         payload = _jsonl_bytes(trees)
@@ -205,6 +207,7 @@ class Oasst2ConvertTests(unittest.TestCase):
                 maximum_conversation_content_bytes=(maximum_conversation_content_bytes),
                 maximum_input_tokens=maximum_input_tokens,
             ),
+            leakage_remediation=leakage_remediation,
             limits=limits,
         )
         return manifest, output, source, selected_tokenizer
@@ -466,6 +469,76 @@ class Oasst2ConvertTests(unittest.TestCase):
         dedup = manifest["policy"]["cross_tree_root_prompt_deduplication"]
         self.assertIn("NFKC", dedup["normalization"])
         self.assertIn("may remain", dedup["near_duplicate_detection"])
+
+    def test_leakage_remediation_binds_baseline_and_excludes_declared_ids(self) -> None:
+        trees = []
+        for index, prompt_text in (
+            (80, "first distinct prompt"),
+            (82, "second prompt"),
+        ):
+            prompt = _message(
+                index,
+                parent=None,
+                role="prompter",
+                text=prompt_text,
+                replies=[
+                    _message(
+                        index + 1,
+                        parent=_uuid(index),
+                        role="assistant",
+                        text=f"answer {index}",
+                        rank=0,
+                    )
+                ],
+            )
+            trees.append(_tree(index, prompt))
+        baseline, _, _, _ = self._convert(trees, output_name="baseline")
+        remediation = LeakageRemediation(
+            excluded_tree_ids=frozenset({_uuid(80)}),
+            baseline_conversion_manifest_sha256="a" * 64,
+            baseline_conversations_sha256=baseline["output"]["sha256"],
+            baseline_conversations_size_bytes=baseline["output"]["size_bytes"],
+            baseline_record_count=baseline["output"]["record_count"],
+            audit_sha256="b" * 64,
+            audit_size_bytes=123,
+            exclusions_sha256="c" * 64,
+            exclusions_size_bytes=45,
+            semantic_model_id="test/model",
+            semantic_model_revision="d" * 40,
+            semantic_model_snapshot_sha256="e" * 64,
+        )
+
+        manifest, output, _, _ = self._convert(
+            trees,
+            output_name="remediated",
+            leakage_remediation=remediation,
+        )
+
+        records = [
+            json.loads(line)
+            for line in (output / CONVERSATIONS_FILENAME)
+            .read_text("utf-8")
+            .splitlines()
+        ]
+        self.assertEqual([record["id"] for record in records], [_uuid(82)])
+        self.assertEqual(manifest["counts"]["pre_remediation_selected_tree_count"], 2)
+        self.assertEqual(manifest["counts"]["leakage_exclusion_count"], 1)
+        leakage = manifest["policy"]["cross_split_leakage_remediation"]
+        self.assertTrue(leakage["active"])
+        self.assertEqual(leakage["audit_sha256"], "b" * 64)
+
+        mismatched = LeakageRemediation(
+            **{
+                **vars(remediation),
+                "baseline_conversations_sha256": "f" * 64,
+            }
+        )
+        with self.assertRaisesRegex(Oasst2ConversionError, "audited baseline"):
+            self._convert(
+                trees,
+                output_name="mismatched",
+                leakage_remediation=mismatched,
+            )
 
     def test_duplicate_json_nan_duplicate_ids_and_gzip_limit_fail_closed(self) -> None:
         invalid_payloads = {

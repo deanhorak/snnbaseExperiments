@@ -333,7 +333,7 @@
       "properties": {
         "path": {"$ref": "#/$defs/nonemptyString"},
         "format": {"const": "snnbase-chatbot-jsonl-v1"},
-        "selection_status": {"const": "not_selected_or_approved"},
+        "selection_status": {"const": "approved_for_internal_research"},
         "strict_validation": {"const": true},
         "limits": {
           "type": "object",

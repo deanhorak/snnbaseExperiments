@@ -148,22 +148,24 @@ its matching Torch `LD_LIBRARY_PATH`; it was not the older 2.3 dependency
 matrix.
 
 The pinned OASST2 revision
-`179dd21fc55192153d94adb0e0ce8f69e222bf75` is now a selected development
-candidate. A full ignored `quality05` conversion validated all 13,854 trees and
-135,174 messages, then retained 12,427 exact-Qwen-compatible conversations:
-9,990 train, 1,165 validation, and 1,272 test. All paths are at most 512 tokens
-without truncation. Exact normalized-root-prompt deduplication removed 96
-records; the canonical output SHA-256 is
-`64c0fb332808ded357e6702b9639b284a0dd9393fa5014f17d69fa88f719a4e5`.
-The raw/converted files remain ignored local artifacts. The conversion profile
-is reproducible but not a universal safety filter, and fuzzy/semantic
-near-duplicate review is still outstanding.
+`179dd21fc55192153d94adb0e0ce8f69e222bf75` is approved for restricted internal
+research under [`OASST2_DATASET_APPROVAL.md`](OASST2_DATASET_APPROVAL.md). A
+full ignored `quality05` conversion validated all 13,854 trees and 135,174
+messages, then retained a 12,427-record pre-remediation baseline. Exact
+normalized-root-prompt deduplication removed 96 records. A self-fingerprinted,
+pinned multilingual fuzzy/semantic audit found 168 high-confidence cross-split
+pairs and deterministically removed 137 train plus 7 validation records while
+preserving all test records. The approved output contains 12,283 conversations:
+9,853 train, 1,158 validation, and 1,272 test. Its canonical SHA-256 is
+`d947b8089d0d2a4dba4c3cadb73a7b8ecd2fecaf121e6e5c01829063be1cf819`.
+All paths are at most 512 tokens without truncation. Raw/converted files remain
+ignored local artifacts, and the documented heuristic limits prohibit an
+absolute no-leakage claim.
 
-The same canonical output completed the real preparation path in 60.08 seconds
-with 286,428 KiB peak RSS. The prepared dataset manifest SHA-256 is
-`88f2298888c0bfb426dc4de84ad1dc89757de380d5773ab7d7d552a9396d416b`;
-its 9,990/1,165/1,272 record shards were then reloaded and revalidated by the
-training driver. The prepared manifest also hash-binds retained copies of the
+The reviewed canonical output also completed the real preparation path; its
+9,853/1,158/1,272 record shards were reloaded and revalidated by the training
+driver. The prepared manifest hash and exact token counts are recorded in the
+approval record. The prepared manifest also hash-binds retained copies of the
 conversion manifest and text-free lineage. This is data-contract evidence, not
 a training or quality result.
 
@@ -177,10 +179,11 @@ model-quality evidence. The existing general non-Torch CI job remains pinned to
 `37abded48777968f112fcd5c66d357d0352d9ff2`; the explicit local
 configure/smoke scripts provide the corresponding reproducible local path.
 
-A conversation dataset candidate has been selected and mechanically validated,
-but it has not received project-specific legal/policy approval and no full
-training run has been performed. Therefore no reportable ANN or SNN held-out
-assistant perplexity or generation-quality measurement is available. The
+A leakage-remediated conversation dataset is approved for restricted internal
+research, but no full training run has been performed. External redistribution
+or deployment still requires separate legal/privacy review. Therefore no
+reportable ANN or SNN held-out assistant perplexity or generation-quality
+measurement is available. The
 completed three-record SNN run is wiring evidence only. No latency, power, or
 energy comparison has been made, and the exact hybrid SNN has not been
 calibrated or evaluated. These remain result gates rather than implementation

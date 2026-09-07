@@ -33,23 +33,27 @@ It contains 1,192,099,840 bytes across 310 BF16 dense tensors. The source
 
 ## Local candidate-data evidence
 
-The ignored OASST2 development conversion used source revision
+The ignored OASST2 conversion used source revision
 `179dd21fc55192153d94adb0e0ce8f69e222bf75`, compressed SHA-256
 `7a886a16ccfc1173c4f00a6897523e3c95b2785a86ee44a18a98f4f2807ee29b`,
 and the declared Apache-2.0 license. The exact Qwen-token-aware `quality05`
-profile emitted 12,427 records: 9,990 train, 1,165 validation, and 1,272 test.
-All selected paths fit the 512-token limit without truncation. Normalized-root
-deduplication removed 96 otherwise eligible records; fuzzy and semantic
-near-duplicates have not yet been excluded.
+profile emitted a 12,427-record pre-remediation baseline: 9,990 train, 1,165
+validation, and 1,272 test. All selected paths fit the 512-token limit without
+truncation. Normalized-root deduplication removed 96 otherwise eligible records.
+A fixed, pinned multilingual fuzzy/semantic audit then found 168
+high-confidence cross-split pairs and removed 144 lower-priority records. The
+approved internal-research output contains 12,283 records: 9,853 train, 1,158
+validation, and 1,272 test.
 
-The canonical conversations SHA-256 is
-`64c0fb332808ded357e6702b9639b284a0dd9393fa5014f17d69fa88f719a4e5`;
+The remediated canonical conversations SHA-256 is
+`d947b8089d0d2a4dba4c3cadb73a7b8ecd2fecaf121e6e5c01829063be1cf819`;
 the text-free lineage SHA-256 is
-`2142c4e246075a3c3eab28f217cd693e14e69c3bb21d29ef95c3a7970ffa90bb`.
+`1ccb4810236477b2629e4926dc430eae55249a7e0fb79f72957857f327871b33`.
 This is reproducibility and data-contract evidence only. The profile permits
 missing human labels and is not a safety certification; the dataset license
-declaration is not project-specific legal approval. Raw and derived data stay
-outside Git.
+declaration is not legal approval for redistribution or external deployment.
+The [approval record](../OASST2_DATASET_APPROVAL.md) limits use to internal
+research. Raw and derived data stay outside Git.
 
 ## Local oracle evidence
 
@@ -103,10 +107,10 @@ compact ANN and SNN checkpoints are not currently interchangeable.
 
 ## Gates before reportable training results
 
-1. Complete owner/legal and policy approval of the pinned OASST2 candidate and
-   retain the conversion/preparation provenance bundle.
-2. Complete fuzzy and semantic near-duplicate analysis before promoting the
-   already exact-normalized-deduplicated IDs/splits.
+1. Obtain separate legal/privacy approval before any redistribution, public
+   service, commercial use, or expansion beyond the internal-research approval.
+2. Re-run the versioned leakage review if any source, tokenizer, policy, split,
+   embedding model, or threshold changes.
 3. Publish and pin a clean language-enabled `snnbase` revision and execute the
    LibTorch chatbot CI smoke on a deterministic dependency stack.
 4. Retain the fully resolved tokenizer/reference environment and hashes for

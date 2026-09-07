@@ -7,7 +7,7 @@ advantage.
 | Track | Checked configurations | Purpose | Current evidence |
 |---|---|---|---|
 | Exact Qwen import | [`qwen3-0.6b-ann-import.json`](../configs/chatbot/qwen3-0.6b-ann-import.json), [`qwen3-0.6b-hybrid-snn.json`](../configs/chatbot/qwen3-0.6b-hybrid-snn.json) | Prove faithful dense Qwen import in ANN mode, then use the same dense tensors with experiment-owned LIF dynamics | Conversion/import and the bounded oracle path exist. A local ignored three-case ANN gate passed; it is not a promoted result. The hybrid SNN has not been calibrated, trained, or evaluated. |
-| Compact trainable controls | [`ann-baseline.json`](../configs/chatbot/ann-baseline.json), [`snn-baseline.json`](../configs/chatbot/snn-baseline.json) | Exercise seeded, provenance-controlled ANN/SNN training at feasible scale | Prepare/train/checkpoint-selection plumbing exists and is tested with fixtures plus a tiny local CPU wiring run. A pinned OASST2 snapshot is selected as a development candidate, but it is not legally approved and no full quality run exists. |
+| Compact trainable controls | [`ann-baseline.json`](../configs/chatbot/ann-baseline.json), [`snn-baseline.json`](../configs/chatbot/snn-baseline.json) | Exercise seeded, provenance-controlled ANN/SNN training at feasible scale | Prepare/train/checkpoint-selection plumbing exists and is tested with fixtures plus a tiny local CPU wiring run. The leakage-remediated pinned OASST2 snapshot is approved for restricted internal research; no full quality run exists. |
 
 The SNNs are activation-first hybrids. Attention, projections, normalization,
 embedding, and readout remain dense; only attention-output and feed-forward
@@ -35,7 +35,8 @@ Implemented:
 
 Not established:
 
-- legal or policy approval of the selected OASST2 development candidate;
+- separate legal/privacy approval before redistributing OASST2-derived text or
+  using it outside the restricted internal-research scope;
 - full ANN or SNN training, held-out perplexity, or generation quality;
 - SNN calibration or fine-tuning after exact dense Qwen import;
 - a promoted, durable exact-import oracle artifact; or
@@ -203,9 +204,10 @@ source pathname is rechecked against that consumed digest; a changed source
 fails instead of attaching new provenance to old tokens.
 
 The OASST2 `2023-11-05_oasst2_ready.trees.jsonl.gz` snapshot at revision
-`179dd21fc55192153d94adb0e0ce8f69e222bf75` is the selected development
-candidate. Its declared license is Apache-2.0. This selection and license
-metadata are not legal approval, and neither available conversion profile is a
+`179dd21fc55192153d94adb0e0ce8f69e222bf75` is approved for restricted internal
+research under the [dataset approval record](OASST2_DATASET_APPROVAL.md). Its
+declared license is Apache-2.0. This is not legal approval to redistribute the
+text or deploy a public service, and neither available conversion profile is a
 universal safety filter. No full training or held-out quality result exists.
 
 The recommended development profile, `quality05`, accepts same-language paths
@@ -218,11 +220,15 @@ assistant-ended candidate with the exact pinned Qwen chat template, retains the
 longest eligible endpoint at or below 512 tokens, and emits at most one path per
 tree. It then deduplicates selected records by NFKC-normalized, case-folded,
 Unicode-whitespace-collapsed root prompt, keeping the first eligible tree in
-pinned source order. This prevents exact normalized root-prompt leakage across
-splits, but fuzzy and semantic near-duplicate analysis remains required.
+pinned source order. A subsequent fixed-threshold fuzzy and pinned multilingual
+semantic audit found 168 high-confidence cross-split pairs. Its deterministic
+remediation removed 137 train and 7 validation records while preserving every
+test record. The remediated output was audited again; see the approval record
+for the exact hashes, thresholds, limitations, and permitted claim.
 
-For the pinned input, the expected `quality05` output is 12,427 records: 9,990
-train, 1,165 validation, and 1,272 test. The exact 512-token check is the
+For the pinned input, the pre-remediation `quality05` output is 12,427 records:
+9,990 train, 1,165 validation, and 1,272 test. The approved output is 12,283
+records: 9,853 train, 1,158 validation, and 1,272 test. The exact 512-token check is the
 sequence-length gate; the default 32,768-byte aggregate-content limit is an
 additional pre-tokenization resource bound (the longest accepted conversation
 contains 3,357 content bytes). These are conversion counts, not a quality
@@ -271,13 +277,57 @@ write-once bundle containing `conversations.jsonl`, `lineage.jsonl`, and
 decompressed hashes, converter and tokenizer identity, policy, filter and split
 counts, output hashes, and source-message lineage.
 
+Create a separate leakage environment from
+[`chatbot-leakage.lock`](../requirements/chatbot-leakage.lock), download
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` at revision
+`e8f8c211226b894fcb81acc59f3b34ba3efd5f42`, and audit that immutable baseline:
+
+```bash
+python3 -m venv .venv-chatbot-leakage
+.venv-chatbot-leakage/bin/pip install \
+  -r requirements/chatbot-leakage.lock
+.venv-chatbot-leakage/bin/python -c \
+  "from huggingface_hub import snapshot_download; snapshot_download(repo_id='sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2', revision='e8f8c211226b894fcb81acc59f3b34ba3efd5f42', local_dir='artifacts/chatbot/leakage-models/paraphrase-multilingual-MiniLM-L12-v2-e8f8c211', allow_patterns=['*.json','*.safetensors','*.model','*.txt','1_Pooling/*'])"
+.venv-chatbot-leakage/bin/python tools/chatbot_leakage_audit.py \
+  --conversion-manifest \
+    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-v1/conversion-manifest.json \
+  --model-dir artifacts/chatbot/leakage-models/paraphrase-multilingual-MiniLM-L12-v2-e8f8c211 \
+  --model-id sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 \
+  --model-revision e8f8c211226b894fcb81acc59f3b34ba3efd5f42 \
+  --device cuda \
+  --output \
+    artifacts/chatbot/leakage-audits/oasst2-quality05-v5/leakage-audit-v1.json \
+  --exclusions-output \
+    artifacts/chatbot/leakage-audits/oasst2-quality05-v5/leakage-exclusions-v1.json
+```
+
+Rerun the converter command above with its `--output-dir` changed to
+`artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-leakage-reviewed-v6`
+and add:
+
+```bash
+  --leakage-audit \
+    artifacts/chatbot/leakage-audits/oasst2-quality05-v5/leakage-audit-v1.json \
+  --expected-leakage-audit-sha256 \
+    a5fc18c713e6e35e6c553b63e975de024a5b1500c98dc1294fe2b0f40c5f9d87 \
+  --leakage-exclusions \
+    artifacts/chatbot/leakage-audits/oasst2-quality05-v5/leakage-exclusions-v1.json \
+  --expected-leakage-exclusions-sha256 \
+    e8a297c92b3c5af0712b61f83a78d261433e68afca03020028665791efc154f0
+```
+
+The converter rejects any mismatch with the exact audited pre-remediation byte
+stream or any exclusion ID that is not encountered. The approved result and
+scope restrictions are recorded in
+[`OASST2_DATASET_APPROVAL.md`](OASST2_DATASET_APPROVAL.md).
+
 Prepare immutable token shards from the canonical conversation output. The
 content-addressed URI/version below comes directly from the conversion
 manifest, so the prepared dataset manifest's source SHA-256 joins unambiguously
 to the pinned archive and conversion policy:
 
 ```bash
-OASST2_CONVERSION_DIR=artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-v1
+OASST2_CONVERSION_DIR=artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-leakage-reviewed-v6
 OASST2_CANONICAL_SHA256="$(
   python3 -c \
     'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["output"]["sha256"])' \
@@ -296,7 +346,7 @@ OASST2_CANONICAL_SHA256="$(
   --source-version "sha256:$OASST2_CANONICAL_SHA256" \
   --source-license Apache-2.0 \
   --output-dir \
-    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-prepared-v1 \
+    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-leakage-reviewed-prepared-v6 \
   --max-input-tokens 512
 ```
 
@@ -317,7 +367,7 @@ Compact ANN:
 ./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
   python3 tools/chatbot_train.py \
   --dataset-dir \
-    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-prepared-v1 \
+    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-leakage-reviewed-prepared-v6 \
   --run-dir artifacts/chatbot/runs/compact-ann-seed42 \
   --core-executable ./build-chatbot/chatbot_experiment \
   --config configs/chatbot/ann-baseline.json
@@ -329,7 +379,7 @@ Compact hybrid SNN:
 ./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
   python3 tools/chatbot_train.py \
   --dataset-dir \
-    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-prepared-v1 \
+    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-leakage-reviewed-prepared-v6 \
   --run-dir artifacts/chatbot/runs/compact-snn-seed42 \
   --core-executable ./build-chatbot/chatbot_experiment \
   --config configs/chatbot/snn-baseline.json
@@ -341,7 +391,7 @@ Exact imported ANN:
 ./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
   python3 tools/chatbot_train.py \
   --dataset-dir \
-    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-prepared-v1 \
+    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-leakage-reviewed-prepared-v6 \
   --run-dir artifacts/chatbot/runs/qwen3-0.6b-ann-seed42 \
   --core-executable ./build-chatbot/chatbot_experiment \
   --config configs/chatbot/qwen3-0.6b-ann-import.json
@@ -353,7 +403,7 @@ Exact-dense hybrid SNN:
 ./scripts/run_with_chatbot_libtorch.sh --build-dir build-chatbot -- \
   python3 tools/chatbot_train.py \
   --dataset-dir \
-    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-prepared-v1 \
+    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-leakage-reviewed-prepared-v6 \
   --run-dir artifacts/chatbot/runs/qwen3-0.6b-hybrid-snn-seed42 \
   --core-executable ./build-chatbot/chatbot_experiment \
   --config configs/chatbot/qwen3-0.6b-hybrid-snn.json
@@ -437,7 +487,7 @@ python3 tools/chatbot_publish.py assemble \
   --run-dir artifacts/chatbot/runs/compact-ann-seed42 \
   --config configs/chatbot/ann-baseline.json \
   --dataset-source \
-    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-v1/conversations.jsonl \
+    artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-leakage-reviewed-v6/conversations.jsonl \
   --experiments-repo . \
   --snnbase-repo ../snnbase \
   --environment artifacts/chatbot/environment.json \

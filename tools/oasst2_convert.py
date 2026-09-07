@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Mapping, Sequence
 from urllib.parse import urlsplit
 
-CONVERTER_VERSION = "1.0.0"
+CONVERTER_VERSION = "1.1.0"
 MANIFEST_SCHEMA_VERSION = 1
 MANIFEST_KIND = "snnbase.oasst2-conversion-manifest"
 CANONICAL_SERIALIZATION = "utf8-json-sort-keys-compact-lf-v1"
@@ -46,6 +46,9 @@ SPLIT_ALGORITHM = "sha256-seed-bucket-v1"
 SPLIT_SEED = 42
 SPLIT_BUCKET_COUNT = 10_000
 DEFAULT_MAX_INPUT_TOKENS = 512
+LEAKAGE_AUDIT_KIND = "snnbase.chatbot-leakage-audit"
+LEAKAGE_EXCLUSIONS_KIND = "snnbase.chatbot-leakage-exclusions"
+LEAKAGE_REMEDIATION_ALGORITHM = "collision-components-retain-highest-priority-split-v1"
 
 DEFAULT_MAXIMUM_COMPRESSED_BYTES = 128 * 1024 * 1024
 DEFAULT_MAXIMUM_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
@@ -168,6 +171,22 @@ class TokenizerIdentity:
     fingerprint_sha256: str
 
 
+@dataclass(frozen=True)
+class LeakageRemediation:
+    excluded_tree_ids: frozenset[str]
+    baseline_conversion_manifest_sha256: str
+    baseline_conversations_sha256: str
+    baseline_conversations_size_bytes: int
+    baseline_record_count: int
+    audit_sha256: str
+    audit_size_bytes: int
+    exclusions_sha256: str
+    exclusions_size_bytes: int
+    semantic_model_id: str
+    semantic_model_revision: str
+    semantic_model_snapshot_sha256: str
+
+
 @dataclass
 class _ConversionState:
     tree_ids: set[str]
@@ -180,6 +199,8 @@ class _ConversionState:
     selected_messages: int = 0
     selected_content_bytes: int = 0
     selected_maximum_token_count: int = 0
+    pre_remediation_records: int = 0
+    leakage_exclusions_applied: int = 0
     path_filter_reasons: Counter[str] | None = None
     tree_filter_reasons: Counter[str] | None = None
     split_counts: Counter[str] | None = None
@@ -817,6 +838,227 @@ def _immutable_source_version(value: str) -> str:
     return version
 
 
+def _read_bounded_json_file(
+    path: Path, label: str, maximum_bytes: int = MAXIMUM_PROVENANCE_FIELD_BYTES * 1024
+) -> tuple[dict[str, Any], str, int]:
+    source = path.absolute()
+    try:
+        metadata = source.stat(follow_symlinks=False)
+    except OSError as error:
+        raise Oasst2ConversionError(f"could not stat {label}: {error}") from error
+    if (
+        source.is_symlink()
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_size <= 0
+        or metadata.st_size > maximum_bytes
+    ):
+        raise Oasst2ConversionError(f"{label} must be a bounded regular file")
+    try:
+        payload = source.read_bytes()
+    except OSError as error:
+        raise Oasst2ConversionError(f"could not read {label}: {error}") from error
+    if len(payload) != metadata.st_size:
+        raise Oasst2ConversionError(f"{label} changed while it was read")
+    try:
+        value = json.loads(
+            payload.decode("utf-8", errors="strict"),
+            object_pairs_hook=_reject_duplicate_fields,
+            parse_constant=_reject_nonstandard_constant,
+        )
+    except (
+        UnicodeError,
+        json.JSONDecodeError,
+        _DuplicateJsonField,
+        ValueError,
+        RecursionError,
+    ) as error:
+        raise Oasst2ConversionError(f"{label} is not strict JSON: {error}") from error
+    if type(value) is not dict:
+        raise Oasst2ConversionError(f"{label} must contain one JSON object")
+    return value, hashlib.sha256(payload).hexdigest(), len(payload)
+
+
+def load_leakage_remediation(
+    audit_path: Path,
+    exclusions_path: Path,
+    expected_audit_sha256: str | None = None,
+    expected_exclusions_sha256: str | None = None,
+) -> LeakageRemediation:
+    """Validate and bind a completed leakage audit and its exclusion decision."""
+
+    audit, audit_sha256, audit_size = _read_bounded_json_file(
+        audit_path, "leakage audit"
+    )
+    exclusions, exclusions_sha256, exclusions_size = _read_bounded_json_file(
+        exclusions_path, "leakage exclusions"
+    )
+    if expected_audit_sha256 is not None:
+        if (
+            SHA256_RE.fullmatch(expected_audit_sha256) is None
+            or audit_sha256 != expected_audit_sha256
+        ):
+            raise Oasst2ConversionError("leakage audit does not match expected SHA-256")
+    if expected_exclusions_sha256 is not None:
+        if (
+            SHA256_RE.fullmatch(expected_exclusions_sha256) is None
+            or exclusions_sha256 != expected_exclusions_sha256
+        ):
+            raise Oasst2ConversionError(
+                "leakage exclusions do not match expected SHA-256"
+            )
+    expected_audit_fields = {
+        "schema_version",
+        "kind",
+        "status",
+        "audit_version",
+        "implementation",
+        "scope",
+        "input",
+        "split",
+        "semantic_model",
+        "thresholds",
+        "results",
+        "remediation",
+        "limitations",
+    }
+    if set(audit) != expected_audit_fields:
+        raise Oasst2ConversionError("leakage audit has unexpected top-level fields")
+    if (
+        audit["schema_version"] != 1
+        or audit["kind"] != LEAKAGE_AUDIT_KIND
+        or audit["status"] != "remediation_required"
+        or audit["audit_version"] != "1.0.0"
+    ):
+        raise Oasst2ConversionError("leakage audit identity/status is unsupported")
+    implementation = audit.get("implementation")
+    if type(implementation) is not dict or set(implementation) != {
+        "filename",
+        "version",
+        "sha256",
+        "size_bytes",
+    }:
+        raise Oasst2ConversionError("leakage audit implementation is malformed")
+    if (
+        implementation.get("filename") != "chatbot_leakage_audit.py"
+        or implementation.get("version") != audit["audit_version"]
+        or SHA256_RE.fullmatch(str(implementation.get("sha256", ""))) is None
+    ):
+        raise Oasst2ConversionError("leakage audit implementation is invalid")
+    _positive_integer(
+        implementation.get("size_bytes"), "leakage audit implementation size_bytes"
+    )
+    if (
+        set(exclusions)
+        != {
+            "schema_version",
+            "kind",
+            "algorithm",
+            "conversion_manifest_sha256",
+            "tree_ids",
+        }
+        or exclusions.get("schema_version") != 1
+    ):
+        raise Oasst2ConversionError("leakage exclusions have an unsupported schema")
+    if (
+        exclusions.get("kind") != LEAKAGE_EXCLUSIONS_KIND
+        or exclusions.get("algorithm") != LEAKAGE_REMEDIATION_ALGORITHM
+    ):
+        raise Oasst2ConversionError(
+            "leakage exclusion identity/algorithm is unsupported"
+        )
+    tree_ids = exclusions.get("tree_ids")
+    if (
+        type(tree_ids) is not list
+        or not tree_ids
+        or len(tree_ids) > DEFAULT_MAXIMUM_TREES
+    ):
+        raise Oasst2ConversionError("leakage exclusions tree_ids are invalid")
+    validated_ids = [
+        _canonical_uuid(value, f"leakage exclusions tree_ids[{index}]")
+        for index, value in enumerate(tree_ids)
+    ]
+    if validated_ids != sorted(validated_ids) or len(set(validated_ids)) != len(
+        validated_ids
+    ):
+        raise Oasst2ConversionError(
+            "leakage exclusions tree_ids must be sorted and unique"
+        )
+    input_record = audit.get("input")
+    results = audit.get("results")
+    remediation = audit.get("remediation")
+    semantic_model = audit.get("semantic_model")
+    scope = audit.get("scope")
+    if not all(
+        type(value) is dict
+        for value in (input_record, results, remediation, semantic_model, scope)
+    ):
+        raise Oasst2ConversionError("leakage audit contains malformed records")
+    if (
+        scope.get("cross_split_only") is not True
+        or scope.get("raw_text_in_report") is not False
+    ):
+        raise Oasst2ConversionError("leakage audit scope is unsupported")
+    manifest_input = input_record.get("conversion_manifest")
+    conversations_input = input_record.get("canonical_conversations")
+    if type(manifest_input) is not dict or type(conversations_input) is not dict:
+        raise Oasst2ConversionError("leakage audit input binding is malformed")
+    baseline_manifest_sha256 = str(manifest_input.get("sha256", ""))
+    baseline_conversations_sha256 = str(conversations_input.get("sha256", ""))
+    if (
+        SHA256_RE.fullmatch(baseline_manifest_sha256) is None
+        or SHA256_RE.fullmatch(baseline_conversations_sha256) is None
+        or exclusions.get("conversion_manifest_sha256") != baseline_manifest_sha256
+    ):
+        raise Oasst2ConversionError("leakage audit input digests do not bind")
+    baseline_size = _positive_integer(
+        conversations_input.get("size_bytes"),
+        "leakage audit canonical conversations size_bytes",
+    )
+    baseline_count = _positive_integer(
+        conversations_input.get("record_count"),
+        "leakage audit canonical conversations record_count",
+    )
+    if (
+        results.get("recommended_exclusion_count") != len(validated_ids)
+        or not isinstance(results.get("high_confidence_cross_split_pair_count"), int)
+        or results["high_confidence_cross_split_pair_count"] <= 0
+        or remediation.get("algorithm") != LEAKAGE_REMEDIATION_ALGORITHM
+        or remediation.get("split_priority") != ["test", "validation", "train"]
+    ):
+        raise Oasst2ConversionError("leakage remediation counts/policy do not bind")
+    ids_digest = hashlib.sha256(
+        ("\n".join(validated_ids) + "\n").encode("utf-8")
+    ).hexdigest()
+    if remediation.get("exclusions_sha256") != ids_digest:
+        raise Oasst2ConversionError("leakage exclusion IDs do not match the audit")
+    model_id = _bounded_string(
+        semantic_model.get("model_id"),
+        "leakage semantic model_id",
+        maximum_bytes=512,
+    )
+    model_revision = str(semantic_model.get("revision", ""))
+    model_snapshot_sha256 = str(semantic_model.get("snapshot_sha256", ""))
+    if (
+        REVISION_RE.fullmatch(model_revision) is None
+        or SHA256_RE.fullmatch(model_snapshot_sha256) is None
+    ):
+        raise Oasst2ConversionError("leakage semantic model binding is invalid")
+    return LeakageRemediation(
+        excluded_tree_ids=frozenset(validated_ids),
+        baseline_conversion_manifest_sha256=baseline_manifest_sha256,
+        baseline_conversations_sha256=baseline_conversations_sha256,
+        baseline_conversations_size_bytes=baseline_size,
+        baseline_record_count=baseline_count,
+        audit_sha256=audit_sha256,
+        audit_size_bytes=audit_size,
+        exclusions_sha256=exclusions_sha256,
+        exclusions_size_bytes=exclusions_size,
+        semantic_model_id=model_id,
+        semantic_model_revision=model_revision,
+        semantic_model_snapshot_sha256=model_snapshot_sha256,
+    )
+
+
 def _normalized_prompt_digest(text: str, maximum_bytes: int) -> bytes:
     normalized = " ".join(unicodedata.normalize("NFKC", text).casefold().split())
     encoded = _utf8_bytes(normalized, "normalized root prompt")
@@ -958,6 +1200,7 @@ def convert_oasst2(
     tokenizer: Any,
     tokenizer_identity: TokenizerIdentity,
     policy: ConversionPolicy,
+    leakage_remediation: LeakageRemediation | None = None,
     limits: ConversionLimits = ConversionLimits(),
 ) -> dict[str, Any]:
     """Convert a pinned gzip JSONL source into one immutable directory."""
@@ -994,12 +1237,15 @@ def convert_oasst2(
     manifest_path = staging / MANIFEST_FILENAME
     converter_sha256, converter_size = _hash_converter()
     output_digest = hashlib.sha256()
+    pre_remediation_digest = hashlib.sha256()
     lineage_digest = hashlib.sha256()
     uncompressed_digest = hashlib.sha256()
     output_bytes = 0
+    pre_remediation_bytes = 0
     lineage_bytes = 0
     uncompressed_bytes = 0
     state = _ConversionState(set(), set())
+    applied_exclusion_ids: set[str] = set()
     compressed_stream: BinaryIO | None = None
     try:
         source, compressed_stream, source_snapshot, source_sha256 = (
@@ -1113,6 +1359,20 @@ def convert_oasst2(
                             ],
                         }
                         line = _canonical_json_line(conversation)
+                        pre_remediation_digest.update(line)
+                        pre_remediation_bytes += len(line)
+                        state.pre_remediation_records += 1
+                        if (
+                            leakage_remediation is not None
+                            and tree_id in leakage_remediation.excluded_tree_ids
+                        ):
+                            applied_exclusion_ids.add(tree_id)
+                            state.leakage_exclusions_applied += 1
+                            assert state.tree_filter_reasons is not None
+                            state.tree_filter_reasons[
+                                "cross_split_near_duplicate_leakage"
+                            ] += 1
+                            continue
                         output_stream.write(line)
                         output_digest.update(line)
                         output_bytes += len(line)
@@ -1148,6 +1408,26 @@ def convert_oasst2(
         if compressed_stream is not None:
             compressed_stream.close()
             compressed_stream = None
+        if leakage_remediation is not None:
+            if applied_exclusion_ids != set(leakage_remediation.excluded_tree_ids):
+                missing = sorted(
+                    set(leakage_remediation.excluded_tree_ids) - applied_exclusion_ids
+                )
+                raise Oasst2ConversionError(
+                    "leakage exclusions did not match the selected baseline IDs: "
+                    f"{missing[:3]}"
+                )
+            if (
+                pre_remediation_digest.hexdigest()
+                != leakage_remediation.baseline_conversations_sha256
+                or pre_remediation_bytes
+                != leakage_remediation.baseline_conversations_size_bytes
+                or state.pre_remediation_records
+                != leakage_remediation.baseline_record_count
+            ):
+                raise Oasst2ConversionError(
+                    "pre-remediation conversion does not match the audited baseline"
+                )
         if state.selected_records == 0:
             raise Oasst2ConversionError("conversion selected no usable conversations")
         os.chmod(conversations_path, 0o444)
@@ -1221,6 +1501,8 @@ def convert_oasst2(
                 "duplicate_normalized_root_prompt_count": (
                     state.tree_filter_reasons["duplicate_normalized_root_prompt"]
                 ),
+                "pre_remediation_selected_tree_count": state.pre_remediation_records,
+                "leakage_exclusion_count": state.leakage_exclusions_applied,
                 "rejected_path_count": sum(state.path_filter_reasons.values()),
             },
             "filter_reasons": {
@@ -1263,9 +1545,45 @@ def convert_oasst2(
                     "digest": "sha256",
                     "maximum_entries": limits.maximum_trees,
                     "near_duplicate_detection": (
-                        "not performed; non-exact semantic or fuzzy duplicates may remain"
+                        "performed with bound audit"
+                        if leakage_remediation is not None
+                        else "not performed; non-exact semantic or fuzzy duplicates may remain"
                     ),
                 },
+                "cross_split_leakage_remediation": (
+                    {
+                        "active": True,
+                        "algorithm": LEAKAGE_REMEDIATION_ALGORITHM,
+                        "baseline_conversion_manifest_sha256": (
+                            leakage_remediation.baseline_conversion_manifest_sha256
+                        ),
+                        "baseline_conversations_sha256": (
+                            leakage_remediation.baseline_conversations_sha256
+                        ),
+                        "baseline_record_count": (
+                            leakage_remediation.baseline_record_count
+                        ),
+                        "audit_sha256": leakage_remediation.audit_sha256,
+                        "audit_size_bytes": leakage_remediation.audit_size_bytes,
+                        "exclusions_sha256": leakage_remediation.exclusions_sha256,
+                        "exclusions_size_bytes": leakage_remediation.exclusions_size_bytes,
+                        "excluded_tree_count": len(
+                            leakage_remediation.excluded_tree_ids
+                        ),
+                        "semantic_model_id": leakage_remediation.semantic_model_id,
+                        "semantic_model_revision": (
+                            leakage_remediation.semantic_model_revision
+                        ),
+                        "semantic_model_snapshot_sha256": (
+                            leakage_remediation.semantic_model_snapshot_sha256
+                        ),
+                        "residual_limit": (
+                            "thresholded heuristic audit; false negatives remain possible"
+                        ),
+                    }
+                    if leakage_remediation is not None
+                    else {"active": False}
+                ),
                 "conservative_zero": {
                     "active": policy.profile == PROFILE_CONSERVATIVE_ZERO,
                     "comparison": "every required label value == 0.0",
@@ -1358,6 +1676,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-license", required=True)
     parser.add_argument("--license-reviewed", action="store_true")
     parser.add_argument("--policy-reviewed", action="store_true")
+    parser.add_argument("--leakage-audit", type=Path)
+    parser.add_argument("--leakage-exclusions", type=Path)
+    parser.add_argument("--expected-leakage-audit-sha256")
+    parser.add_argument("--expected-leakage-exclusions-sha256")
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument(
         "--max-input-tokens",
@@ -1432,6 +1754,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             arguments.expected_tokenizer_fingerprint,
         )
         tokenizer = load_transformers_tokenizer(assets)
+        leakage_arguments = (
+            arguments.leakage_audit,
+            arguments.leakage_exclusions,
+            arguments.expected_leakage_audit_sha256,
+            arguments.expected_leakage_exclusions_sha256,
+        )
+        if any(value is not None for value in leakage_arguments) and not all(
+            value is not None for value in leakage_arguments
+        ):
+            raise Oasst2ConversionError(
+                "leakage audit/exclusions paths and expected SHA-256 values must all be provided together"
+            )
+        leakage_remediation = (
+            load_leakage_remediation(
+                arguments.leakage_audit,
+                arguments.leakage_exclusions,
+                arguments.expected_leakage_audit_sha256,
+                arguments.expected_leakage_exclusions_sha256,
+            )
+            if arguments.leakage_audit is not None
+            else None
+        )
         manifest = convert_oasst2(
             source_path=arguments.input,
             output_directory=arguments.output_dir,
@@ -1455,6 +1799,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 maximum_input_tokens=arguments.max_input_tokens,
             ),
+            leakage_remediation=leakage_remediation,
             limits=ConversionLimits(
                 maximum_compressed_bytes=arguments.maximum_compressed_bytes,
                 maximum_uncompressed_bytes=arguments.maximum_uncompressed_bytes,

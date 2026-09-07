@@ -1,0 +1,14 @@
+# Direct versions used for the OASST2 multilingual leakage audit. Install in an
+# isolated virtual environment. The CUDA-enabled project image may supply the
+# matching torch wheel/index; CPU-only execution is also supported.
+torch==2.5.1
+numpy==1.26.4
+scipy==1.17.1
+pandas==2.2.3
+scikit-learn==1.7.2
+transformers==4.51.3
+tokenizers==0.21.4
+huggingface-hub==0.30.2
+datasets==3.5.1
+sentence-transformers==4.1.0
+safetensors==0.5.3

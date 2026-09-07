@@ -24,9 +24,9 @@
     "license": "Apache-2.0"
   },
   "dataset": {
-    "path": "data/chatbot/conversations.jsonl",
+    "path": "artifacts/chatbot/oasst2-2023-11-05-quality05-qwen3-512-leakage-reviewed-v6/conversations.jsonl",
     "format": "snnbase-chatbot-jsonl-v1",
-    "selection_status": "not_selected_or_approved",
+    "selection_status": "approved_for_internal_research",
     "strict_validation": true,
     "limits": {
       "maximum_records": 1000000,
