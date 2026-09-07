@@ -69,12 +69,20 @@ def repo_path(value: str | Path) -> Path:
 
 
 def validate_profile(raw: Any) -> dict[str, Any]:
-    if not isinstance(raw, dict) or set(raw) != {
+    required = {
         "schema_version", "id", "description", "tokenizer", "model", "initialization"
-    } or type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
+    }
+    if (not isinstance(raw, dict) or
+            set(raw) not in (required, required | {"calibration_headroom"}) or
+            type(raw["schema_version"]) is not int or raw["schema_version"] != 1):
         raise ContractError("profile requires the temporal LLM schema version 1 fields")
     if not all(isinstance(raw[name], str) and raw[name] for name in ("id", "description")):
         raise ContractError("profile id and description must be nonempty strings")
+    if "calibration_headroom" in raw and (
+            type(raw["calibration_headroom"]) not in (float, int) or
+            not math.isfinite(raw["calibration_headroom"]) or
+            raw["calibration_headroom"] < 1.0):
+        raise ContractError("profile calibration_headroom must be finite and at least 1")
     model = raw["model"]
     if not isinstance(model, dict) or set(model) != MODEL_FIELDS:
         raise ContractError("profile model must specify every supported geometry/neuron field")
@@ -332,6 +340,85 @@ def evaluate_records(request: Callable[..., Mapping[str, Any]], records: Sequenc
             "final_position_predictions": final_predictions}
 
 
+def diagnose_records(request: Callable[..., Mapping[str, Any]],
+                     records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Aggregate raw temporal encoder counters without losing token weighting."""
+    totals: list[dict[str, dict[str, float | int]]] | None = None
+    fields = ("element_count", "saturated_count", "absolute_error_sum",
+              "absolute_input_sum", "maximum_scale_ratio", "silent_nonzero_count")
+    for record in records:
+        payload = request("diagnose", input_ids=record["input_ids"]).get("temporal_diagnostics")
+        layers = payload.get("layers") if isinstance(payload, Mapping) else None
+        if not isinstance(layers, list) or not layers:
+            raise ContractError("core returned invalid temporal diagnostics")
+        if totals is None:
+            totals = [{site: {name: 0 for name in fields}
+                       for site in ("attention", "feed_forward")} for _ in layers]
+        if len(layers) != len(totals):
+            raise ContractError("core changed temporal diagnostic layer count")
+        for index, layer in enumerate(layers):
+            if not isinstance(layer, Mapping) or layer.get("layer") != index:
+                raise ContractError("core returned unordered temporal diagnostics")
+            for site in ("attention", "feed_forward"):
+                values = layer.get(site)
+                if not isinstance(values, Mapping) or any(name not in values for name in fields):
+                    raise ContractError("core returned incomplete temporal site diagnostics")
+                element_count = values["element_count"]
+                saturated_count = values["saturated_count"]
+                silent_count = values["silent_nonzero_count"]
+                if (type(element_count) is not int or element_count <= 0 or
+                        type(saturated_count) is not int or not 0 <= saturated_count <= element_count or
+                        type(silent_count) is not int or not 0 <= silent_count <= element_count):
+                    raise ContractError("core returned invalid temporal diagnostic counts")
+                for name in ("absolute_error_sum", "absolute_input_sum", "maximum_scale_ratio"):
+                    value = values[name]
+                    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                        raise ContractError("core returned invalid temporal diagnostic value")
+                target = totals[index][site]
+                for name in ("element_count", "saturated_count", "absolute_error_sum",
+                             "absolute_input_sum", "silent_nonzero_count"):
+                    target[name] += values[name]
+                target["maximum_scale_ratio"] = max(
+                    target["maximum_scale_ratio"], values["maximum_scale_ratio"])
+    assert totals is not None
+    layers_out = []
+    global_totals = {site: {name: 0 for name in fields}
+                     for site in ("attention", "feed_forward")}
+    for index, layer in enumerate(totals):
+        rendered = {"layer": index}
+        for site, values in layer.items():
+            elements = values["element_count"]
+            magnitude = values["absolute_input_sum"]
+            rendered[site] = {
+                **values,
+                "saturation_rate": values["saturated_count"] / elements,
+                "silent_nonzero_rate": values["silent_nonzero_count"] / elements,
+                "mean_absolute_error": values["absolute_error_sum"] / elements,
+                "relative_absolute_error": (
+                    values["absolute_error_sum"] / magnitude if magnitude else 0.0),
+            }
+            target = global_totals[site]
+            for name in ("element_count", "saturated_count", "absolute_error_sum",
+                         "absolute_input_sum", "silent_nonzero_count"):
+                target[name] += values[name]
+            target["maximum_scale_ratio"] = max(
+                target["maximum_scale_ratio"], values["maximum_scale_ratio"])
+        layers_out.append(rendered)
+    summary = {}
+    for site, values in global_totals.items():
+        elements = values["element_count"]
+        magnitude = values["absolute_input_sum"]
+        summary[site] = {
+            **values,
+            "saturation_rate": values["saturated_count"] / elements,
+            "silent_nonzero_rate": values["silent_nonzero_count"] / elements,
+            "mean_absolute_error": values["absolute_error_sum"] / elements,
+            "relative_absolute_error": (
+                values["absolute_error_sum"] / magnitude if magnitude else 0.0),
+        }
+    return {"records": len(records), "layers": layers_out, "summary": summary}
+
+
 def generate(request: Callable[..., Mapping[str, Any]], tokenizer: Any, text: str,
              profile: Mapping[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     if not text.strip() or "\0" in text or len(text.encode("utf-8")) > MAX_CORPUS_LINE_BYTES:
@@ -433,8 +520,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--save-checkpoint", type=Path)
     p.add_argument("--qwen-identity", type=Path, help="flat verified identity JSON for a custom import")
     p.add_argument("--calibration-corpus", type=Path)
+    p.add_argument("--calibration-headroom", type=float,
+                   help="range multiplier for observed per-feature maxima (default 4)")
     p.add_argument("--train-corpus", type=Path)
     p.add_argument("--eval-corpus", type=Path)
+    p.add_argument("--diagnostics-corpus", type=Path,
+                   help="measure per-layer temporal clipping and reconstruction error")
     p.add_argument("--compare-ann", action="store_true", help="compare against the same source initialization in a second process")
     p.add_argument("--max-records", type=int, default=8, help="maximum records read per corpus (default 8)")
     p.add_argument("--train-steps", type=int, default=8, help="bounded microbatch updates, cycling selected training records")
@@ -480,6 +571,11 @@ def resolve_configuration(args: argparse.Namespace) -> tuple[dict[str, Any], Map
     for name, default in defaults.items():
         if getattr(args, name) is None:
             setattr(args, name, restored["runner"][name] if restored else default)
+    if args.calibration_headroom is None:
+        args.calibration_headroom = (
+            restored.get("runner", {}).get(
+                "calibration_headroom", profile.get("calibration_headroom", 4.0))
+            if restored else profile.get("calibration_headroom", 4.0))
     if restored and (profile != restored["profile"] or (not args.weights_only and any(
         getattr(args, name) != restored["runner"][name] for name in defaults
     )) or (args.weights_only and args.ann != restored["runner"]["ann"])):
@@ -506,21 +602,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ContractError("seed must be uint64; top-k and prefill-chunk-size must be nonnegative")
     if not math.isfinite(args.learning_rate) or args.learning_rate <= 0 or not math.isfinite(args.temperature) or args.temperature < 0 or not 0 < args.top_p <= 1:
         raise ContractError("invalid learning rate, temperature or top-p")
+    if not math.isfinite(args.calibration_headroom) or args.calibration_headroom < 1.0:
+        raise ContractError("--calibration-headroom must be finite and at least 1")
     if args.compare_ann and (not args.eval_corpus or args.ann or args.checkpoint or args.train_corpus):
         raise ContractError("--compare-ann requires evaluation from source weights with no checkpoint/training or --ann")
     if args.calibration_corpus and args.ann:
         raise ContractError("calibration requires the temporal spiking variant")
     if (args.calibration_corpus or args.train_corpus) and not args.save_checkpoint:
         raise ContractError("calibration/training requires --save-checkpoint to retain learned state")
-    if not any((args.prompt, args.chat, args.calibration_corpus, args.train_corpus, args.eval_corpus)):
-        raise ContractError("select --plan, --prompt, --chat, or a calibration/training/evaluation corpus")
+    if args.diagnostics_corpus and args.ann:
+        raise ContractError("temporal diagnostics require the temporal spiking variant")
+    if not any((args.prompt, args.chat, args.calibration_corpus, args.train_corpus,
+                args.eval_corpus, args.diagnostics_corpus)):
+        raise ContractError("select --plan, --prompt, --chat, or a calibration/training/evaluation/diagnostics corpus")
     if args.save_checkpoint:
         if args.save_checkpoint.exists() and (not args.checkpoint or args.save_checkpoint.resolve() != args.checkpoint.resolve()):
             raise ContractError("save-checkpoint already exists; choose a new destination or explicitly resume it")
         args.save_checkpoint.parent.mkdir(parents=True, exist_ok=True)
     tokenizer = load_tokenizer(profile, args.assets_dir)
     corpora = {name: load_corpus(path, tokenizer, profile["model"]["maximum_sequence_length"], args.max_records)
-               for name, path in (("calibration", args.calibration_corpus), ("training", args.train_corpus), ("evaluation", args.eval_corpus)) if path}
+               for name, path in (("calibration", args.calibration_corpus),
+                                  ("training", args.train_corpus),
+                                  ("evaluation", args.eval_corpus),
+                                  ("diagnostics", args.diagnostics_corpus)) if path}
     check_eval_disjoint(corpora)
     learning_records = set(restored.get("learning_record_sha256", [])) if restored else set()
     for name in ("calibration", "training"):
@@ -540,7 +644,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     try:
         report["metadata"] = session.request("metadata")["metadata"]
         if corpora.get("calibration"):
-            report["calibration"] = [dict(session.request("calibrate", input_ids=row["input_ids"], reset_state=(index == 0)))
+            report["calibration_headroom"] = args.calibration_headroom
+            report["calibration"] = [dict(session.request("calibrate", input_ids=row["input_ids"], reset_state=(index == 0),
+                                                           calibration_headroom=args.calibration_headroom))
                                      for index, row in enumerate(corpora["calibration"])]
         if corpora.get("training"):
             report["training"] = []
@@ -557,7 +663,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             write_report(checkpoint_sidecar(args.save_checkpoint), {
                 "kind": "snnbase.temporal-llm-checkpoint", "schema_version": 1, "profile": profile,
                 "checkpoint_sha256": sha256_file(args.save_checkpoint),
-                "runner": {name: getattr(args, name) for name in ("ann", "seed", "learning_rate", "gradient_accumulation")},
+                "runner": {name: getattr(args, name) for name in ("ann", "seed", "learning_rate", "gradient_accumulation", "calibration_headroom")},
                 "source_checkpoint": str(args.checkpoint) if args.checkpoint else None,
                 "calibration_applied": bool(corpora.get("calibration")) or bool(restored and restored.get("calibration_applied")),
                 "learning_record_sha256": sorted(learning_records),
@@ -565,6 +671,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             })
         if corpora.get("evaluation"):
             report["evaluation"] = evaluate_records(session.request, corpora["evaluation"])
+        if corpora.get("diagnostics"):
+            report["temporal_diagnostics"] = diagnose_records(
+                session.request, corpora["diagnostics"])
         if args.prompt:
             if args.benchmark_repeats:
                 report["benchmark"] = benchmark_generation(session.request, tokenizer, profile, args)

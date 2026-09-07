@@ -438,6 +438,7 @@ class ProtocolParser {
     std::vector<std::int64_t> probe_token_ids;
     GenerationConfig generation;
     bool reset_state{};
+    double calibration_headroom{4.0};
     std::unordered_set<std::string> fields;
   };
 
@@ -508,6 +509,8 @@ class ProtocolParser {
         request.reset_state = parse_bool();
       } else if (key == "prefill_chunk_size") {
         request.generation.prefill_chunk_size = checked_size(parse_uint64());
+      } else if (key == "calibration_headroom") {
+        request.calibration_headroom = parse_number();
       } else {
         fail("unknown request field: " + key);
       }
@@ -578,7 +581,9 @@ class ProtocolParser {
                request.operation == "evaluate") {
       validate({"input_ids"}, {"loss_mask", "reset_state"});
     } else if (request.operation == "calibrate") {
-      validate({"input_ids"}, {"reset_state"});
+      validate({"input_ids"}, {"reset_state", "calibration_headroom"});
+    } else if (request.operation == "diagnose") {
+      validate({"input_ids"}, {});
     } else if (request.operation == "metadata" ||
                request.operation == "reset" ||
                request.operation == "flush" ||
@@ -918,6 +923,29 @@ void write_metrics(std::ostream& output, const LanguageModelMetrics& metrics) {
          << ",\"learning_rate\":" << metrics.learning_rate << '}';
 }
 
+void write_temporal_diagnostics(std::ostream& output,
+                                const TemporalDiagnostics& diagnostics) {
+  const auto write_site = [&output](const TemporalSiteDiagnostics& site) {
+    output << "{\"element_count\":" << site.element_count
+           << ",\"saturated_count\":" << site.saturated_count
+           << ",\"absolute_error_sum\":" << std::setprecision(17)
+           << site.absolute_error_sum << ",\"absolute_input_sum\":"
+           << site.absolute_input_sum << ",\"maximum_scale_ratio\":"
+           << site.maximum_scale_ratio << ",\"silent_nonzero_count\":"
+           << site.silent_nonzero_count << '}';
+  };
+  output << "{\"layers\":[";
+  for (std::size_t index = 0; index < diagnostics.layers.size(); ++index) {
+    if (index != 0U) output << ',';
+    output << "{\"layer\":" << index << ",\"attention\":";
+    write_site(diagnostics.layers[index].attention);
+    output << ",\"feed_forward\":";
+    write_site(diagnostics.layers[index].feed_forward);
+    output << '}';
+  }
+  output << "]}";
+}
+
 void write_training_state(std::ostream& output, const TrainingState& state) {
   output << "{\"micro_batch_count\":" << state.micro_batch_count
          << ",\"optimizer_step_count\":" << state.optimizer_step_count
@@ -1137,10 +1165,73 @@ LogitInspection Runner::inspect_next_token_logits(
   return result;
 }
 
+TemporalDiagnostics Runner::diagnose_temporal_encoding(
+    const std::span<const std::int64_t> input_ids) {
+  if (!impl_->config.model.spiking ||
+      !impl_->config.model.temporal_spiking) {
+    throw std::invalid_argument(
+        "temporal diagnostics require temporal_spiking");
+  }
+  torch::NoGradGuard no_grad;
+  const auto was_training = impl_->model->is_training();
+  impl_->model->eval();
+  impl_->model->reset_state();
+  impl_->model->set_temporal_diagnostics_enabled(true);
+  torch::Tensor values;
+  try {
+    const auto tokens = make_token_tensor(input_ids, impl_->selected_device);
+    snnbase::language::KeyValueCache cache;
+    values = impl_->model->forward_last_cached(tokens, cache)
+                 .spikes.temporal_diagnostics.to(torch::kFloat64)
+                 .to(torch::kCPU).contiguous();
+  } catch (...) {
+    impl_->model->set_temporal_diagnostics_enabled(false);
+    impl_->model->train(was_training);
+    impl_->model->reset_state();
+    throw;
+  }
+  impl_->model->set_temporal_diagnostics_enabled(false);
+  impl_->model->train(was_training);
+  impl_->model->reset_state();
+  if (values.dim() != 3 || values.size(0) != impl_->config.model.layer_count ||
+      values.size(1) != 2 || values.size(2) != 6 ||
+      !torch::isfinite(values).all().item<bool>() ||
+      values.lt(0).any().item<bool>()) {
+    throw std::runtime_error("temporal encoder returned invalid diagnostics");
+  }
+  const auto view = values.accessor<double, 3>();
+  const auto count = [](const double value) {
+    if (value > static_cast<double>(std::numeric_limits<std::uint64_t>::max()) ||
+        value != std::floor(value)) {
+      throw std::runtime_error("temporal diagnostic count is invalid");
+    }
+    return static_cast<std::uint64_t>(value);
+  };
+  TemporalDiagnostics result;
+  result.layers.reserve(static_cast<std::size_t>(values.size(0)));
+  for (std::int64_t layer = 0; layer < values.size(0); ++layer) {
+    const auto site = [&](const std::int64_t index) {
+      return TemporalSiteDiagnostics{
+          .element_count = count(view[layer][index][0]),
+          .saturated_count = count(view[layer][index][1]),
+          .absolute_error_sum = view[layer][index][2],
+          .absolute_input_sum = view[layer][index][3],
+          .maximum_scale_ratio = view[layer][index][4],
+          .silent_nonzero_count = count(view[layer][index][5])};
+    };
+    result.layers.push_back(
+        {.attention = site(0), .feed_forward = site(1)});
+  }
+  return result;
+}
+
 void Runner::calibrate(const std::span<const std::int64_t> input_ids,
-                       const bool reset) {
+                       const bool reset, const double headroom) {
   if (!impl_->config.model.temporal_spiking) {
     throw std::invalid_argument("calibration requires temporal_spiking");
+  }
+  if (!std::isfinite(headroom) || headroom < 1.0) {
+    throw std::invalid_argument("calibration headroom must be finite and >= 1");
   }
   if (impl_->pending_accumulation_steps != 0U) {
     throw std::invalid_argument("flush pending gradients before calibration");
@@ -1150,7 +1241,7 @@ void Runner::calibrate(const std::span<const std::int64_t> input_ids,
   const auto was_training = impl_->model->is_training();
   impl_->model->eval();
   if (reset) impl_->model->reset_spike_calibration();
-  impl_->model->set_calibration_enabled(true);
+  impl_->model->set_calibration_enabled(true, headroom);
   try {
     snnbase::language::KeyValueCache cache;
     static_cast<void>(impl_->model->forward_last_cached(tokens, cache));
@@ -1770,9 +1861,23 @@ ProtocolServeResult serve_token_protocol(
           throw std::invalid_argument("calibrate requires nonempty input_ids");
         }
         checkpoint_current = false;
-        runner.calibrate(request.input_ids, request.reset_state);
+        runner.calibrate(request.input_ids, request.reset_state,
+                         request.calibration_headroom);
         write_prefix(output, request_id, true);
         output << ",\"calibrated_tokens\":" << request.input_ids.size() << "}\n";
+        output.flush();
+        continue;
+      }
+      if (request.operation == "diagnose") {
+        if (request.input_ids.empty()) {
+          throw std::invalid_argument("diagnose requires nonempty input_ids");
+        }
+        const auto diagnostics =
+            runner.diagnose_temporal_encoding(request.input_ids);
+        write_prefix(output, request_id, true);
+        output << ",\"temporal_diagnostics\":";
+        write_temporal_diagnostics(output, diagnostics);
+        output << "}\n";
         output.flush();
         continue;
       }

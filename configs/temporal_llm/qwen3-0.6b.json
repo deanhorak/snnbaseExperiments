@@ -2,6 +2,7 @@
   "schema_version": 1,
   "id": "qwen3-0.6b",
   "description": "Qwen/Qwen3-0.6B-Base dense weights adapted to the snnbase abstract temporal spiking decoder. Calibrate before assessing language quality.",
+  "calibration_headroom": 16.0,
   "tokenizer": {
     "assets_path": "artifacts/chatbot/qwen3-0.6b-base",
     "fingerprint_sha256": "6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237"

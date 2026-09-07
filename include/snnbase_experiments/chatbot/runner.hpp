@@ -78,6 +78,24 @@ struct LogitInspection {
   std::vector<LogitValue> top_k{};
 };
 
+struct TemporalSiteDiagnostics {
+  std::uint64_t element_count{};
+  std::uint64_t saturated_count{};
+  double absolute_error_sum{};
+  double absolute_input_sum{};
+  double maximum_scale_ratio{};
+  std::uint64_t silent_nonzero_count{};
+};
+
+struct TemporalLayerDiagnostics {
+  TemporalSiteDiagnostics attention{};
+  TemporalSiteDiagnostics feed_forward{};
+};
+
+struct TemporalDiagnostics {
+  std::vector<TemporalLayerDiagnostics> layers{};
+};
+
 struct LanguageModelMetrics {
   std::size_t token_count{};
   std::size_t correct_token_count{};
@@ -143,6 +161,8 @@ class Runner {
       std::span<const std::int64_t> input_ids,
       std::span<const std::int64_t> probe_token_ids,
       std::size_t top_k);
+  [[nodiscard]] TemporalDiagnostics diagnose_temporal_encoding(
+      std::span<const std::int64_t> input_ids);
   [[nodiscard]] LanguageModelMetrics train_step(
       std::span<const std::int64_t> input_ids,
       std::span<const std::uint8_t> loss_mask = {});
@@ -153,7 +173,8 @@ class Runner {
 
   // Explicit dense reference pass that records temporal encoder scales.
   // Calibration must use training data, before held-out evaluation.
-  void calibrate(std::span<const std::int64_t> input_ids, bool reset = false);
+  void calibrate(std::span<const std::int64_t> input_ids, bool reset = false,
+                 double headroom = 4.0);
 
   void reset_state() noexcept;
   [[nodiscard]] QwenDenseLoadResult load_qwen_weights(

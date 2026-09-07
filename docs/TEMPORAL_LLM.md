@@ -29,9 +29,10 @@ Channels share a clock whose pulse thresholds progressively decrease; positive
 and negative event channels represent opposing abstract populations. This
 clocked pulse code is an engineering approximation, not evidence of emergent
 biological synchronization. Calibration measures per-channel activation scales
-using training/calibration text. The default range is 4.04 times the observed
-absolute maximum (fourfold headroom plus 1% endpoint slack), reducing clipping
-on unseen activations at the cost of coarser finite-step precision. The
+using training/calibration text. The Qwen profile reserves 16.16 times the
+observed absolute maximum (sixteenfold headroom plus 1% endpoint slack), while
+the tiny profile keeps the library's 4.04× default. Greater headroom reduces
+clipping on unseen activations at the cost of coarser finite-step precision. The
 optional temporal decay carries abstract activity between causal token
 positions; it does not model ion channels, neurotransmitters or molecular
 membrane mechanisms. A zero decay is the default for measuring how closely the
@@ -131,6 +132,7 @@ truncated. Split long documents into suitably bounded records beforehand.
 python3 tools/temporal_llm.py --profile qwen3-0.6b \
   --calibration-corpus configs/temporal_llm/calibration.jsonl \
   --eval-corpus configs/temporal_llm/evaluation.jsonl \
+  --diagnostics-corpus configs/temporal_llm/evaluation.jsonl \
   --max-records 32 --compare-ann \
   --save-checkpoint artifacts/temporal_llm/qwen3-0.6b-recalibrated.pt \
   --report artifacts/temporal_llm/calibration-report.json
@@ -142,6 +144,9 @@ are synthetic smoke data, not a benchmark establishing general language ability.
 The default calibration headroom was selected using development comparisons;
 results used to select that setting are development evidence, not an independent
 final test, even when the calibration and evaluation passages are disjoint.
+The Qwen profile's sixteenfold headroom was selected from bounded 4×, 8×, 16×,
+and 32× development comparisons. Override it with
+`--calibration-headroom` when evaluating a different model or corpus.
 `--max-records` defaults to eight records **per corpus**. Calibration
 uses only its selected calibration records, then freezes the resulting scales
 for evaluation and generation. The ANN comparison runs afterward in a separate
@@ -153,6 +158,13 @@ Evaluation rejects token-identical records seen in calibration/training. The
 checkpoint sidecar preserves these record identities across resumed runs. This
 check detects exact overlap; it does not detect paraphrases or shared source
 documents. Choose genuinely independent data splits for substantive evaluation.
+
+`--diagnostics-corpus` records raw and derived metrics for every layer's
+attention and feed-forward temporal encoder: saturation, silent nonzero input,
+absolute reconstruction error, and maximum input-to-scale ratio. It may reuse
+calibration records because it does not score language quality. Diagnostics
+are opt-in and excluded from generation benchmarks because their reductions
+and device transfers deliberately add overhead.
 
 ## Text generation
 

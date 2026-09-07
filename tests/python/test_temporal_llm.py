@@ -38,12 +38,40 @@ class TemporalLlmTests(unittest.TestCase):
         return args
 
     def test_qwen_parameter_estimate_matches_real_archive_inventory(self):
-        plan = llm.resource_plan(llm.load_profile("qwen3-0.6b"))
+        profile = llm.load_profile("qwen3-0.6b")
+        self.assertEqual(profile["calibration_headroom"], 16.0)
+        plan = llm.resource_plan(profile)
         self.assertEqual(plan["dense_parameter_count"], 596049920)
         self.assertEqual(plan["fp32_weight_bytes"], 2384199680)
         self.assertEqual(plan["bf16_weight_bytes_if_supported_by_backend"], 1192099840)
         self.assertEqual(plan["last_position_logits_fp32_bytes_batch_one"] * 512,
                          plan["full_sequence_logits_fp32_bytes_batch_one"])
+
+    def test_temporal_diagnostics_are_aggregated_by_element_count(self):
+        calls = 0
+
+        def request(op, **fields):
+            nonlocal calls
+            self.assertEqual(op, "diagnose")
+            calls += 1
+            count = 2 if calls == 1 else 6
+            site = {"element_count": count, "saturated_count": calls - 1,
+                    "absolute_error_sum": float(calls),
+                    "absolute_input_sum": float(10 * calls),
+                    "maximum_scale_ratio": 0.5 * calls,
+                    "silent_nonzero_count": calls}
+            return {"temporal_diagnostics": {"layers": [
+                {"layer": 0, "attention": dict(site),
+                 "feed_forward": dict(site)}]}}
+
+        result = llm.diagnose_records(request, [
+            {"input_ids": [1, 2]}, {"input_ids": [3, 4, 5]}])
+        summary = result["summary"]["attention"]
+        self.assertEqual(summary["element_count"], 8)
+        self.assertEqual(summary["saturated_count"], 1)
+        self.assertEqual(summary["maximum_scale_ratio"], 1.0)
+        self.assertAlmostEqual(summary["mean_absolute_error"], 3 / 8)
+        self.assertAlmostEqual(summary["relative_absolute_error"], 3 / 30)
 
     def test_plan_never_loads_tokenizer_or_starts_process(self):
         with patch.object(llm, "load_tokenizer", side_effect=AssertionError("tokenizer")), \
@@ -76,6 +104,10 @@ class TemporalLlmTests(unittest.TestCase):
         profile = llm.load_profile("qwen3-0.6b")
         profile["model"]["model_dimension"] = 2048
         with self.assertRaisesRegex(llm.ContractError, "exact dense geometry"):
+            llm.validate_profile(profile)
+        profile = llm.load_profile("qwen3-0.6b")
+        profile["calibration_headroom"] = float("inf")
+        with self.assertRaisesRegex(llm.ContractError, "calibration_headroom"):
             llm.validate_profile(profile)
 
     def test_import_and_ann_commands_keep_temporal_mode_explicit(self):
@@ -307,6 +339,7 @@ class TemporalLlmTests(unittest.TestCase):
                 report = llm.run(args)
                 self.assertEqual(len(report["training"]), 3)
                 self.assertEqual([data["reset_state"] for op, data in calls if op == "calibrate"], [True])
+                self.assertEqual([data["calibration_headroom"] for op, data in calls if op == "calibrate"], [4.0])
                 restored = llm.read_json(llm.checkpoint_sidecar(checkpoint))
                 self.assertEqual(len(restored["learning_record_sha256"]), 3)
                 resume = llm.build_parser().parse_args(["--checkpoint", str(checkpoint), "--eval-corpus", str(train)])

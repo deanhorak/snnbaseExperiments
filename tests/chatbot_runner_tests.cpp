@@ -600,6 +600,21 @@ void test_temporal_calibration_training_and_resume() {
   Runner runner(config);
   const std::vector<std::int64_t> tokens{1, 2, 3, 4, 5, 6};
   runner.calibrate(tokens, true);
+  const auto diagnostics = runner.diagnose_temporal_encoding(tokens);
+  require(diagnostics.layers.size() ==
+              static_cast<std::size_t>(config.model.layer_count),
+          "temporal diagnostics returned the wrong layer count");
+  for (const auto& layer : diagnostics.layers) {
+    for (const auto* site : {&layer.attention, &layer.feed_forward}) {
+      require(site->element_count > 0U &&
+                  site->saturated_count <= site->element_count &&
+                  site->silent_nonzero_count <= site->element_count &&
+                  std::isfinite(site->absolute_error_sum) &&
+                  std::isfinite(site->absolute_input_sum) &&
+                  std::isfinite(site->maximum_scale_ratio),
+              "temporal diagnostics returned invalid site metrics");
+    }
+  }
   const auto before = runner.evaluate(tokens);
   for (int step = 0; step < 10; ++step) {
     static_cast<void>(runner.train_step(tokens));
@@ -686,7 +701,9 @@ void test_temporal_calibration_training_and_resume() {
 
   std::istringstream input(
       R"({"protocol":"snnbase.chatbot.tokens/v1","request_id":"f","op":"flush"})" "\n"
-      R"({"protocol":"snnbase.chatbot.tokens/v1","request_id":"c","op":"calibrate","input_ids":[1,2,3],"reset_state":true})" "\n"
+      R"({"protocol":"snnbase.chatbot.tokens/v1","request_id":"c","op":"calibrate","input_ids":[1,2,3],"reset_state":true,"calibration_headroom":16})" "\n"
+      R"({"protocol":"snnbase.chatbot.tokens/v1","request_id":"d","op":"diagnose","input_ids":[1,2,3]})" "\n"
+      R"({"protocol":"snnbase.chatbot.tokens/v1","request_id":"badhr","op":"calibrate","input_ids":[1,2],"calibration_headroom":0.5})" "\n"
       R"({"protocol":"snnbase.chatbot.tokens/v1","request_id":"bad","op":"calibrate","input_ids":[1,2],"loss_mask":[0,1]})" "\n");
   std::ostringstream output;
   const auto served = snnbase_experiments::chatbot::serve_token_protocol(
@@ -695,7 +712,15 @@ void test_temporal_calibration_training_and_resume() {
           "calibration after flush did not mark checkpoint stale");
   require(output.str().find("\"calibrated_tokens\":3") != std::string::npos,
           "calibration protocol did not acknowledge token count");
+  require(output.str().find(
+              "\"request_id\":\"d\",\"ok\":true,\"temporal_diagnostics\":{\"layers\":[") !=
+              std::string::npos &&
+              output.str().find("\"silent_nonzero_count\":") !=
+                  std::string::npos,
+          "diagnostic protocol response is incomplete");
   require_protocol_error(output.str(), "bad", "calibrate does not accept request field: loss_mask");
+  require_protocol_error(output.str(), "badhr",
+                         "calibration headroom must be finite and >= 1");
   std::filesystem::remove(checkpoint);
 }
 
