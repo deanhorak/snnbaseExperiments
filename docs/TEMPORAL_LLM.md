@@ -54,12 +54,12 @@ parameters produces an equally capable or faster spiking model automatically.
 ## Build and run locally
 
 The validated local checkout already contains the calibrated Qwen checkpoint at
-`artifacts/temporal_llm/qwen3-0.6b-calibrated.pt` and its `.temporal.json` sidecar.
+`artifacts/temporal_llm/qwen3-0.6b-calibrated-h16.pt` and its `.temporal.json` sidecar.
 These large artifacts are ignored by Git. Start a CPU continuation immediately:
 
 ```bash
 python3 /home/dean/repos/snnbaseExperiments/tools/temporal_llm.py \
-  --checkpoint /home/dean/repos/snnbaseExperiments/artifacts/temporal_llm/qwen3-0.6b-calibrated.pt \
+  --checkpoint /home/dean/repos/snnbaseExperiments/artifacts/temporal_llm/qwen3-0.6b-calibrated-h16.pt \
   --weights-only --device cpu --prompt "The capital of France is" --max-new-tokens 24
 ```
 
@@ -170,11 +170,11 @@ and device transfers deliberately add overhead.
 
 ```bash
 python3 tools/temporal_llm.py \
-  --checkpoint artifacts/temporal_llm/qwen3-0.6b-calibrated.pt \
+  --checkpoint artifacts/temporal_llm/qwen3-0.6b-calibrated-h16.pt \
   --prompt "The capital of France is" --max-new-tokens 24
 
 python3 tools/temporal_llm.py \
-  --checkpoint artifacts/temporal_llm/qwen3-0.6b-calibrated.pt --chat
+  --checkpoint artifacts/temporal_llm/qwen3-0.6b-calibrated-h16.pt --chat
 ```
 
 `--prompt` performs raw continuation. `--chat` uses a simple `User:`/`Assistant:`
@@ -194,7 +194,7 @@ prompt through one process:
 
 ```bash
 python3 tools/temporal_llm.py \
-  --checkpoint artifacts/temporal_llm/qwen3-0.6b-calibrated.pt \
+  --checkpoint artifacts/temporal_llm/qwen3-0.6b-calibrated-h16.pt \
   --weights-only --device cuda --prompt "The capital of France is" \
   --max-new-tokens 32 --benchmark-warmups 2 --benchmark-repeats 5 \
   --report artifacts/temporal_llm/qwen3-0.6b-cuda-benchmark.json
@@ -289,7 +289,7 @@ are loaded while optimizer state, counters and RNG state are left fresh:
 
 ```bash
 python3 tools/temporal_llm.py \
-  --checkpoint artifacts/temporal_llm/qwen3-0.6b-calibrated.pt \
+  --checkpoint artifacts/temporal_llm/qwen3-0.6b-calibrated-h16.pt \
   --weights-only --device cuda --chat
 ```
 

@@ -1,7 +1,8 @@
 # Temporal spiking Qwen experiment — 7 September 2026
 
-Implemented in both repositories on `ReturmToBasics`. The measurements below
-were recorded during development, before the final implementation commits.
+Implemented in both repositories on `ReturmToBasics`. Historical measurements
+are labeled below. The selected 16× development and holdout runs used clean
+builds at snnbase `5783b00` and snnbaseExperiments `4d23ec6`.
 
 The experiment loads the pinned Qwen3-0.6B-Base weights into `snnbase::language::Decoder`, generates from the full tokenizer vocabulary, calibrates hard signed temporal events, and supports checkpointed causal training. Model dimensions and output-head tying are configurable; verified sharded BF16 archives and an alternate untied architecture are covered by tests.
 
@@ -15,7 +16,7 @@ CPU command validated with the saved model:
 
 ```bash
 python3 /home/dean/repos/snnbaseExperiments/tools/temporal_llm.py \
-  --checkpoint /home/dean/repos/snnbaseExperiments/artifacts/temporal_llm/qwen3-0.6b-calibrated.pt \
+  --checkpoint /home/dean/repos/snnbaseExperiments/artifacts/temporal_llm/qwen3-0.6b-calibrated-h16.pt \
   --weights-only --device cpu --prompt "The capital of France is" --max-new-tokens 24
 ```
 
@@ -23,19 +24,18 @@ To use the RTX 3050 from your normal terminal:
 
 ```bash
 python3 /home/dean/repos/snnbaseExperiments/tools/temporal_llm.py \
-  --checkpoint /home/dean/repos/snnbaseExperiments/artifacts/temporal_llm/qwen3-0.6b-calibrated.pt \
+  --checkpoint /home/dean/repos/snnbaseExperiments/artifacts/temporal_llm/qwen3-0.6b-calibrated-h16.pt \
   --weights-only --device cuda --chat
 ```
 
 `--weights-only` loads model parameters and calibration on the selected device, without restoring CPU optimizer/RNG state. Exact training resume remains available without this flag. The original entry point also accepts `tools/temporal_chat.py --llm`; its reservoir baseline remains available.
 
-The RTX 3050 is present with 8 GiB VRAM and driver 580.173.02. A subsequent
-approved host run loaded the saved 0.6B checkpoint with `--weights-only
---device cuda` and generated ` Paris. The capital` for the four-token smoke
-prompt. The run recorded 1.00 seconds to first token and 1.69 generated
-tokens/second, including first-load overhead. This is functional CUDA
-validation, not a controlled CPU/GPU performance comparison. No driver
-installation was needed.
+The RTX 3050 is present with 8 GiB VRAM and driver 580.173.02. The selected
+checkpoint generated ` Paris. The capital of Germany is Berlin...` from the
+prompt above. Five retained 32-token measurements after two warmups had a
+median 9.265 tokens/second, 3.454-second core latency, and 109.1 ms to first
+token. All five token sequences were identical. This is a bounded runtime
+measurement rather than a universal speed or energy result.
 
 ## Measured language behavior
 
@@ -45,12 +45,26 @@ Calibration used 32 authored passages containing 730 tokens. Evaluation used 16 
 
 | Variant | Token NLL | Perplexity | Token accuracy |
 |---|---:|---:|---:|
-| Dense Qwen reference | 2.358701 | 10.5772 | 51.30% |
+| Dense Qwen reference, CUDA | 2.358726 | 10.5775 | 51.30% |
 | Initial narrow range, 16 ticks | 2.858804 | 17.4407 | 42.03% |
-| Final 4.04× range, 16 ticks | 2.402092 | 11.0463 | 48.41% |
-| 4.04× range, 20 ticks | 2.401190 | 11.0363 | 48.41% |
+| 4.04× range, 16 ticks | 2.402151 | 11.0469 | 48.41% |
+| 8.08× range, 16 ticks | 2.370564 | 10.7034 | 49.86% |
+| **Selected 16.16× range, 16 ticks** | **2.362769** | **10.6203** | **51.30%** |
+| 32.32× range, 16 ticks | 2.364560 | 10.6394 | 51.01% |
 
-Sixteen ticks remain the default because the additional four ticks produced little improvement. Final mean hard-event activity was 0.3494 on the development text. Calibration is frozen during inference; the forward reconstruction contains emitted events only, with no analog remainder at the encoder sites.
+Sixteen ticks remain the default because an earlier 20-tick comparison produced
+little improvement. The selected range reduced the temporal-minus-dense NLL gap
+from 0.043425 to 0.004043 and matched dense token accuracy and all 16 selected
+final-position predictions. Mean hard-event activity was 0.2878. Calibration is
+frozen during inference; the forward reconstruction contains emitted events
+only, with no analog remainder at the encoder sites.
+
+Layer telemetry explained the range choice. With 4× headroom, development
+feed-forward sites clipped 3,700 of 31,051,776 values and reached 14.95 times
+the calibrated scale. At 16×, clipping fell to 173 values (0.000557%) and the
+aggregate absolute reconstruction error was 0.2077% of absolute input. The 32×
+candidate clipped only 23 values, but its coarser pulse resolution raised that
+error to 0.3818% and slightly worsened NLL.
 
 Prompt: `The capital of France is`
 
@@ -64,8 +78,9 @@ A subsequent controlled RTX 3050 comparison used the same frozen checkpoint,
 prompt and CUDA environment. Each binary ran two excluded warmups followed by
 five retained 32-token generations in one loaded process. All original and
 fused runs produced identical token IDs. The fused CUDA encoder also reproduced
-the original CUDA development metrics exactly: NLL 2.402142, perplexity
-11.046817, token accuracy 48.41% and mean event activity 0.349393.
+the earlier 4× checkpoint's original CUDA development metrics exactly: NLL
+2.402142, perplexity 11.046817, token accuracy 48.41% and mean event activity
+0.349393.
 
 | Warm CUDA measurement | Original eager encoder | Fused encoder | Change |
 |---|---:|---:|---:|
@@ -101,31 +116,33 @@ Implementation and reproduction instructions are in `/home/dean/repos/snnbase/do
 
 ## Independent frozen-checkpoint check
 
-After selecting and freezing the settings above, a separate set of 16 short
-passages was authored in `configs/temporal_llm/holdout.jsonl`. These introduce
-topics such as chess, ceramics, weaving and postal sorting. The checkpoint was
-not recalibrated or trained, and no parameters or prompts were tuned using
-these results. The original development measurements above remain historical
-evidence of configuration selection.
+After selecting and freezing the settings above, the existing separate set of
+16 short passages in `configs/temporal_llm/holdout.jsonl` was evaluated once
+with the new 16× checkpoint. These introduce topics such as chess, ceramics,
+weaving and postal sorting. The checkpoint was not recalibrated or trained, and
+no parameters or prompts were tuned using these results.
 
-Both models evaluated the same 417 causal targets with four CPU threads. Their
-ordered token-record hashes and source-archive identities match. Every holdout
-record hash differs from both the earlier calibration and development sets.
+The historical dense source evaluation and the new CUDA temporal evaluation
+cover the same 417 causal targets. Their ordered token-record hashes and
+source-archive identities match. Every holdout record hash differs from both
+the earlier calibration and development sets.
 
 | Frozen variant | Token NLL | Perplexity | Token accuracy |
 |---|---:|---:|---:|
 | Dense Qwen source | 3.011883 | 20.3256 | 41.73% |
-| Temporal conversion, 4.04× range, 16 ticks | 3.169769 | 23.8020 | 40.05% |
+| Earlier temporal conversion, 4.04× range, 16 ticks | 3.169769 | 23.8020 | 40.05% |
+| **Temporal conversion, 16.16× range, 16 ticks** | **3.048154** | **21.0764** | **42.69%** |
 
-The conversion increases NLL by **0.157886** and perplexity by **17.10%**, while
-reducing token accuracy by **1.68 percentage points**. Mean hard-event activity
-was 0.35008. This separate check shows a measurable conversion cost beyond the
-earlier development set. Sixteen authored passages remain a small quality check,
-not a broad language-model benchmark.
+The selected conversion increases NLL by **0.036271** and perplexity by
+**3.69%**; token accuracy is **0.96 percentage points higher** on this small
+sample. It removes 77.0% of the earlier NLL gap. Mean hard-event activity was
+0.28843. Holdout telemetry found 179 clipped feed-forward values among
+37,244,928 (0.000481%). This separate check still shows a measurable
+probabilistic conversion cost. Sixteen authored passages remain a small quality
+check, not a broad language-model benchmark.
 
-Three non-punctuation prefixes were selected before inspecting the holdout
-results. Each model generated at most 12 new tokens with greedy decoding. All
-outputs are included below, including incorrect continuations.
+The generations below are the earlier 4× checkpoint's historical outputs; the
+holdout was not reused for selecting or tuning the new checkpoint.
 
 | Prefix | Dense source continuation | Temporal continuation |
 |---|---|---|
