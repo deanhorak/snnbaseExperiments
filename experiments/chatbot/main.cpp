@@ -35,6 +35,7 @@ using snnbase_experiments::chatbot::
          "writes one JSON response per line.\n\n"
       << "Options:\n"
       << "  --checkpoint PATH          Load an existing model checkpoint\n"
+      << "  --weights-only             Load model/calibration with fresh optimizer (device portable)\n"
       << "  --save-checkpoint PATH     Save model state after shutdown/EOF\n"
       << "  --qwen3-0.6b               Use the exact pinned Qwen3 architecture\n"
       << "  --qwen-archive PATH        Load a converted Qwen dense archive\n"
@@ -55,6 +56,14 @@ using snnbase_experiments::chatbot::
       << "  --simulation-steps N       LIF microsteps per activation (4)\n"
       << "  --ann                      Bypass LIF sites for the ANN control\n"
       << "  --snn                      Enable LIF sites (default)\n"
+      << "  --temporal-spiking         Calibrated signed temporal spike encoding\n"
+      << "  --temporal-decay F         Prior-token spike feedback [0,1) (0)\n"
+      << "  --untied-embeddings        Independent vocabulary output projection\n"
+      << "  --qwen-model-id ID         Generic archive model identity\n"
+      << "  --qwen-revision HEX        Immutable source model revision\n"
+      << "  --qwen-source-sha256 HEX   Source checkpoint digest\n"
+      << "  --qwen-config-sha256 HEX   Source config digest\n"
+      << "  --qwen-tokenizer-sha256 HEX Tokenizer fingerprint\n"
       << "  --threshold F              Initial LIF threshold (1.0)\n"
       << "  --leak F                   Initial LIF leak (0.9)\n"
       << "  --surrogate-slope F        Surrogate sigmoid slope (4.0)\n"
@@ -154,7 +163,9 @@ struct Options {
   std::filesystem::path save_checkpoint;
   std::filesystem::path qwen_archive;
   std::string qwen_archive_sha256;
+  snnbase_experiments::chatbot::QwenDenseArchiveIdentity qwen_identity;
   bool qwen3_06b{};
+  bool weights_only{};
   bool model_shape_override{};
   bool context_override{};
 };
@@ -197,8 +208,21 @@ Options parse_options(const int argc, char** argv) {
       options.runner.model.spiking = false;
       continue;
     }
+    if (option == "--weights-only") {
+      options.weights_only = true;
+      continue;
+    }
     if (option == "--snn") {
       options.runner.model.spiking = true;
+      continue;
+    }
+    if (option == "--temporal-spiking") {
+      options.runner.model.temporal_spiking = true;
+      continue;
+    }
+    if (option == "--untied-embeddings") {
+      options.runner.model.tie_word_embeddings = false;
+      options.model_shape_override = true;
       continue;
     }
     if (option == "--qk-norm") {
@@ -227,6 +251,18 @@ Options parse_options(const int argc, char** argv) {
       options.qwen_archive = value;
     } else if (option == "--qwen-archive-sha256") {
       options.qwen_archive_sha256 = value;
+    } else if (option == "--qwen-model-id") {
+      options.qwen_identity.model_id = value;
+    } else if (option == "--qwen-revision") {
+      options.qwen_identity.revision = value;
+    } else if (option == "--qwen-source-sha256") {
+      options.qwen_identity.source_checkpoint_sha256 = value;
+    } else if (option == "--qwen-config-sha256") {
+      options.qwen_identity.config_sha256 = value;
+    } else if (option == "--qwen-tokenizer-sha256") {
+      options.qwen_identity.tokenizer_fingerprint_sha256 = value;
+    } else if (option == "--temporal-decay") {
+      options.runner.model.temporal_decay = parse_finite(value, option);
     } else if (option == "--device") {
       options.runner.device = value;
     } else if (option == "--vocabulary-size") {
@@ -305,16 +341,39 @@ Options parse_options(const int argc, char** argv) {
             "--qwen3-0.6b cannot be combined with architecture-shape overrides");
     }
     apply_qwen3_06b_config(options);
+    if (!options.qwen_identity.model_id.empty() ||
+        !options.qwen_identity.revision.empty() ||
+        !options.qwen_identity.source_checkpoint_sha256.empty() ||
+        !options.qwen_identity.config_sha256.empty() ||
+        !options.qwen_identity.tokenizer_fingerprint_sha256.empty()) {
+      usage(argv[0], "pinned Qwen preset cannot override archive identity");
+    }
+    options.qwen_identity = {
+        .model_id = std::string(qwen3_phase0_model_id),
+        .revision = std::string(qwen3_phase0_revision),
+        .archive_sha256 = options.qwen_archive_sha256,
+        .source_checkpoint_sha256 = std::string(qwen3_phase0_source_checkpoint_sha256),
+        .config_sha256 = std::string(qwen3_phase0_config_sha256),
+        .tokenizer_fingerprint_sha256 = std::string(qwen3_phase0_tokenizer_fingerprint_sha256)};
   }
+  options.qwen_identity.archive_sha256 = options.qwen_archive_sha256;
   if (options.qwen_archive.empty() != options.qwen_archive_sha256.empty()) {
     usage(argv[0],
           "--qwen-archive and --qwen-archive-sha256 must be supplied together");
   }
   if (!options.qwen_archive.empty() && !options.qwen3_06b) {
-    usage(argv[0], "--qwen-archive requires --qwen3-0.6b");
+    const auto& identity = options.qwen_identity;
+    if (identity.model_id.empty() || identity.revision.empty() ||
+        identity.source_checkpoint_sha256.empty() || identity.config_sha256.empty() ||
+        identity.tokenizer_fingerprint_sha256.empty()) {
+      usage(argv[0], "generic Qwen import requires all five --qwen identity fields");
+    }
   }
   if (!options.qwen_archive.empty() && !options.checkpoint.empty()) {
     usage(argv[0], "Qwen import and runner checkpoint load are mutually exclusive");
+  }
+  if (options.weights_only && options.checkpoint.empty()) {
+    usage(argv[0], "--weights-only requires --checkpoint");
   }
   return options;
 }
@@ -361,22 +420,14 @@ int main(int argc, char** argv) {
     Runner runner(options.runner);
     if (!options.qwen_archive.empty()) {
       const auto result = runner.load_qwen_weights(
-          options.qwen_archive,
-          {.model_id = std::string(qwen3_phase0_model_id),
-           .revision = std::string(qwen3_phase0_revision),
-           .archive_sha256 = options.qwen_archive_sha256,
-           .source_checkpoint_sha256 =
-               std::string(qwen3_phase0_source_checkpoint_sha256),
-           .config_sha256 = std::string(qwen3_phase0_config_sha256),
-           .tokenizer_fingerprint_sha256 =
-               std::string(qwen3_phase0_tokenizer_fingerprint_sha256)});
+          options.qwen_archive, options.qwen_identity);
       std::cerr << "loaded " << result.loaded_tensor_count
                 << " verified Qwen dense tensors from "
                 << options.qwen_archive << '\n';
     }
     if (!options.checkpoint.empty()) {
-      runner.load_checkpoint(options.checkpoint);
-      if (runner.qwen_weights().has_value()) {
+      runner.load_checkpoint(options.checkpoint, options.weights_only);
+      if (options.qwen3_06b && runner.qwen_weights().has_value()) {
         snnbase_experiments::chatbot::
             require_qwen3_phase0_checkpoint_provenance(
                 *runner.qwen_weights());
@@ -384,7 +435,9 @@ int main(int argc, char** argv) {
     }
     const auto serve_result =
         snnbase_experiments::chatbot::serve_token_protocol(
-            std::cin, std::cout, runner, {}, options.save_checkpoint);
+            std::cin, std::cout, runner,
+            {.maximum_tokens = static_cast<std::size_t>(
+                 options.runner.model.maximum_sequence_length)}, options.save_checkpoint);
     if (!options.save_checkpoint.empty() &&
         !serve_result.checkpoint_current) {
       static_cast<void>(runner.flush_optimizer());

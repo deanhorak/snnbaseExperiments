@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "qwen3-0.6b",
+  "description": "Qwen/Qwen3-0.6B-Base dense weights adapted to the snnbase abstract temporal spiking decoder. Calibrate before assessing language quality.",
+  "tokenizer": {
+    "assets_path": "artifacts/chatbot/qwen3-0.6b-base",
+    "fingerprint_sha256": "6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237"
+  },
+  "model": {
+    "vocabulary_size": 151936,
+    "maximum_sequence_length": 512,
+    "model_dimension": 1024,
+    "layer_count": 28,
+    "query_head_count": 16,
+    "key_value_head_count": 8,
+    "head_dimension": 128,
+    "feed_forward_dimension": 3072,
+    "query_key_normalization": true,
+    "tied_embeddings": true,
+    "rms_epsilon": 0.000001,
+    "rope_base": 1000000.0,
+    "simulation_steps": 16,
+    "temporal_decay": 0.0
+  },
+  "initialization": {
+    "type": "qwen_archive",
+    "path": "artifacts/chatbot/qwen3-0.6b-base-dense-v1/qwen-dense.snnq",
+    "sha256": "333c8be1b3fde5013ee8d1dcb96f23051dd934f8e1f359aff329e7e5cf8ccac8",
+    "preset": "qwen3-0.6b"
+  }
+}

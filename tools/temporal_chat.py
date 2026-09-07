@@ -228,4 +228,10 @@ def main(argv: list[str] | None = None) -> int:
         if core is not None: core.close()
 
 if __name__ == "__main__":
+    # Keep the lightweight biological reservoir baseline reproducible, while
+    # offering the scalable library decoder from the original entry point.
+    if "--llm" in sys.argv:
+        sys.argv.remove("--llm")
+        from temporal_llm import main as llm_main
+        raise SystemExit(llm_main())
     raise SystemExit(main())

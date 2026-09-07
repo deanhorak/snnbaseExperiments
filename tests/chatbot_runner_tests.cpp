@@ -585,6 +585,106 @@ void test_protocol_checkpoint_currency() {
   std::filesystem::remove(checkpoint);
 }
 
+void test_temporal_calibration_training_and_resume() {
+  auto config = tiny_config();
+  config.model.temporal_spiking = true;
+  config.model.temporal_decay = 0.1;
+  config.model.simulation_steps = 8;
+  Runner runner(config);
+  const std::vector<std::int64_t> tokens{1, 2, 3, 4, 5, 6};
+  runner.calibrate(tokens, true);
+  const auto before = runner.evaluate(tokens);
+  for (int step = 0; step < 10; ++step) {
+    static_cast<void>(runner.train_step(tokens));
+  }
+  const auto after = runner.evaluate(tokens);
+  require(after.loss < before.loss,
+          "temporal surrogate training did not reduce causal loss");
+  require(after.mean_spike_rate > 0.0 && after.mean_spike_rate <= 1.0,
+          "temporal training did not emit hard spikes");
+  auto generation = GenerationConfig{.maximum_new_tokens = 3, .seed = 7};
+  generation.prefill_chunk_size = 0;
+  const auto full = runner.generate(tokens, generation);
+  generation.prefill_chunk_size = 2;
+  const auto chunked = runner.generate(tokens, generation);
+  require(chunked.output_ids == full.output_ids,
+          "temporal generation changed with prefill chunk size");
+  require(std::abs(chunked.metrics.mean_spike_rate -
+                   full.metrics.mean_spike_rate) < 1.0e-6,
+          "temporal generation activity changed with prefill chunk size");
+  const auto checkpoint = temporary_checkpoint("snnbase-temporal-resume");
+  runner.save_checkpoint(checkpoint);
+  Runner restored(config);
+  restored.load_checkpoint(checkpoint);
+  require(std::abs(restored.evaluate(tokens).loss - after.loss) < 1.0e-6,
+          "temporal calibration was not checkpointed");
+  auto inference_config = config;
+  inference_config.learning_rate = 0.007;
+  inference_config.weight_decay = 0.05;
+  Runner inference(inference_config);
+  static_cast<void>(inference.train_step(tokens));
+  torch::manual_seed(12345);
+  const auto expected_rng = torch::rand({3});
+  torch::manual_seed(12345);
+  inference.load_checkpoint(checkpoint, true);
+  require(torch::equal(torch::rand({3}), expected_rng),
+          "weights-only load restored or changed RNG state");
+  require(inference.training_state().micro_batch_count == 0U &&
+              inference.training_state().optimizer_step_count == 0U &&
+              inference.training_state().learning_rate == inference_config.learning_rate,
+          "weights-only load restored training counters or optimizer settings");
+  require(std::abs(inference.evaluate(tokens).loss - after.loss) < 1.0e-6,
+          "weights-only load changed temporal parameters or calibration");
+  const std::vector<std::int64_t> probes{1, 2, 3};
+  const auto reference_logits = restored.inspect_next_token_logits(tokens, probes, 1);
+  const auto inference_logits = inference.inspect_next_token_logits(tokens, probes, 1);
+  for (std::size_t index = 0; index < probes.size(); ++index) {
+    require(std::abs(reference_logits.probes[index].logit -
+                     inference_logits.probes[index].logit) < 1.0e-6,
+            "weights-only load did not preserve logits");
+  }
+  Runner fresh(inference_config);
+  fresh.load_checkpoint(checkpoint, true);
+  static_cast<void>(fresh.train_step(tokens));
+  static_cast<void>(inference.train_step(tokens));
+  require(std::abs(inference.evaluate(tokens).loss - fresh.evaluate(tokens).loss) < 1.0e-6,
+          "weights-only load retained stale optimizer moments");
+  bool optimizer_mismatch_rejected = false;
+  try { inference.load_checkpoint(checkpoint); }
+  catch (const std::runtime_error&) { optimizer_mismatch_rejected = true; }
+  require(optimizer_mismatch_rejected,
+          "full resume accepted mismatched optimizer settings");
+  const auto expected = runner.train_step(tokens);
+  const auto resumed = restored.train_step(tokens);
+  require(std::abs(expected.loss - resumed.loss) < 1.0e-6 &&
+              expected.optimizer_step_count == resumed.optimizer_step_count,
+          "temporal optimizer resume differs from uninterrupted training");
+  require(std::abs(runner.evaluate(tokens).loss - restored.evaluate(tokens).loss) < 1.0e-6,
+          "restored temporal optimizer produced different weights");
+  auto incompatible = config;
+  incompatible.model.temporal_decay = 0.2;
+  Runner wrong(incompatible);
+  bool rejected = false;
+  try { wrong.load_checkpoint(checkpoint); }
+  catch (const std::runtime_error&) { rejected = true; }
+  require(rejected, "temporal checkpoint accepted different neuron dynamics");
+  std::filesystem::remove(checkpoint);
+
+  std::istringstream input(
+      R"({"protocol":"snnbase.chatbot.tokens/v1","request_id":"f","op":"flush"})" "\n"
+      R"({"protocol":"snnbase.chatbot.tokens/v1","request_id":"c","op":"calibrate","input_ids":[1,2,3],"reset_state":true})" "\n"
+      R"({"protocol":"snnbase.chatbot.tokens/v1","request_id":"bad","op":"calibrate","input_ids":[1,2],"loss_mask":[0,1]})" "\n");
+  std::ostringstream output;
+  const auto served = snnbase_experiments::chatbot::serve_token_protocol(
+      input, output, runner, {}, checkpoint);
+  require(!served.checkpoint_current,
+          "calibration after flush did not mark checkpoint stale");
+  require(output.str().find("\"calibrated_tokens\":3") != std::string::npos,
+          "calibration protocol did not acknowledge token count");
+  require_protocol_error(output.str(), "bad", "calibrate does not accept request field: loss_mask");
+  std::filesystem::remove(checkpoint);
+}
+
 }  // namespace
 
 int main() {
@@ -598,4 +698,5 @@ int main() {
   test_bounded_jsonl_protocol();
   test_exact_operation_field_contracts();
   test_protocol_checkpoint_currency();
+  test_temporal_calibration_training_and_resume();
 }

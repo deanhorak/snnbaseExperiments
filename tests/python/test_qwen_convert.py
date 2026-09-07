@@ -28,6 +28,10 @@ from qwen_convert import (  # noqa: E402
     parse_qwen_dense_config,
     read_safetensors_inventory,
     validate_inventory,
+    validate_checkpoint_shards,
+    checkpoint_identity,
+    build_parser,
+    _load_plan,
 )
 
 MODEL_ID = "tests/Qwen3Tiny"
@@ -93,26 +97,42 @@ def _write_safetensors(
     path.write_bytes(struct.pack("<Q", len(encoded)) + encoded + payload)
 
 
-def _make_assets(root: Path, *, wrong_shape: bool = False) -> tuple[str, object]:
+def _make_assets(root: Path, *, wrong_shape: bool = False, untied: bool = False,
+                 sharded: bool = False) -> tuple[str, object]:
     root.mkdir()
     fixture = REPOSITORY / "tests" / "fixtures" / "chatbot" / "fake_qwen" / "assets"
     shutil.copyfile(fixture / "tokenizer.json", root / "tokenizer.json")
     shutil.copyfile(fixture / "tokenizer_config.json", root / "tokenizer_config.json")
-    _json(root / "config.json", _config())
+    raw_config = _config()
+    if untied:
+        raw_config.update(tie_word_embeddings=False, hidden_size=12,
+                          num_attention_heads=4, num_key_value_heads=2,
+                          intermediate_size=20, num_hidden_layers=3)
+    _json(root / "config.json", raw_config)
     config = parse_qwen_dense_config(root / "config.json")
     mappings = expected_tensor_mappings(config)
-    _write_safetensors(
-        root / "model.safetensors",
-        mappings,
-        wrong_shape_for=mappings[1].source_name if wrong_shape else None,
-    )
+    if sharded:
+        shard_names = ["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"]
+        sections = [mappings[::2], mappings[1::2]]
+        for name, section in zip(shard_names, sections):
+            _write_safetensors(root / name, section)
+        _json(root / "model.safetensors.index.json", {
+            "metadata": {"total_size": sum(math.prod(item.shape) * 2 for item in mappings)},
+            "weight_map": {item.source_name: name for name, section in zip(shard_names, sections) for item in section},
+        })
+        weight_names = [*shard_names, "model.safetensors.index.json"]
+    else:
+        _write_safetensors(
+            root / "model.safetensors", mappings,
+            wrong_shape_for=mappings[1].source_name if wrong_shape else None,
+        )
+        weight_names = ["model.safetensors"]
     fingerprint, tokenizer_records = tokenizer_fingerprint(root)
     records = [
         *tokenizer_records,
         file_record(root, "config.json"),
-        file_record(root, "model.safetensors"),
+        *(file_record(root, name) for name in weight_names),
     ]
-    weight = file_record(root, "model.safetensors")
     _json(
         root / "qwen-assets.json",
         {
@@ -128,13 +148,68 @@ def _make_assets(root: Path, *, wrong_shape: bool = False) -> tuple[str, object]
             },
             "files": records,
             "weights_present": True,
-            "weight_files": [weight],
+            "weight_files": [file_record(root, name) for name in weight_names],
         },
     )
     return fingerprint, config
 
 
 class QwenConvertTests(unittest.TestCase):
+    def test_generic_cli_requires_opt_in_and_imports_untied_shards(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            fingerprint, config = _make_assets(temporary / "assets", untied=True, sharded=True)
+            arguments = ["inventory", "--assets-dir", str(temporary / "assets"),
+                         "--model-id", MODEL_ID, "--revision", REVISION,
+                         "--expected-tokenizer-fingerprint", fingerprint,
+                         "--output", str(temporary / "inventory.json")]
+            with self.assertRaisesRegex(ContractError, "allow-unpinned-dense-model"):
+                _load_plan(build_parser().parse_args(arguments))
+            assets, loaded_config, mappings, inventory = _load_plan(
+                build_parser().parse_args([*arguments, "--allow-unpinned-dense-model"]))
+            self.assertEqual(loaded_config, config)
+            self.assertEqual(len(mappings), 36)
+            self.assertEqual(mappings[-1].destination_name, "lm_head.weight")
+            self.assertEqual(mappings[-1].shape, (17, 12))
+            first = convert_archive(assets, config, mappings, inventory, temporary / "converted")
+            self.assertTrue(first["tied_output_projection"]["separate_lm_head"])
+            self.assertFalse(first["decoder_config"]["tied_output_projection"])
+            identity = checkpoint_identity(assets)
+            self.assertEqual(identity["fingerprint_algorithm"], "sha256-canonical-weight-file-manifest-v1")
+            self.assertEqual(len(identity["files"]), 3)
+            raw = (temporary / "converted" / ARCHIVE_FILENAME).read_bytes()
+            self.assertEqual(raw[56:88].hex(), identity["sha256"])
+            for record in first["dense_tensors"]:
+                source = inventory[record["source_name"]]
+                with source.source_path.open("rb") as stream:
+                    stream.seek(source.absolute_offset)
+                    expected = stream.read(source.length)
+                self.assertEqual(raw[record["archive_offset"]:record["archive_offset"] + record["length"]], expected)
+
+    def test_shard_index_and_duplicate_payloads_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "assets"
+            fingerprint, config = _make_assets(root, untied=True, sharded=True)
+            assets = verify_asset_manifest(root, MODEL_ID, REVISION, fingerprint, require_weights=True)
+            index = json.loads((root / "model.safetensors.index.json").read_text())
+            name = next(iter(index["weight_map"]))
+            index["weight_map"][name] = "missing.safetensors"
+            _json(root / "model.safetensors.index.json", index)
+            with self.assertRaisesRegex(ContractError, "wrong file"):
+                validate_checkpoint_shards(assets, config)
+            shard = root / "model-00001-of-00002.safetensors"
+            with self.assertRaisesRegex(ContractError, "duplicate tensors"):
+                validate_inventory([shard, shard], config)
+
+    def test_unsupported_architectures_fail_before_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            for changed in ({"rope_scaling": {"rope_type": "yarn"}},
+                            {"use_sliding_window": True}, {"num_experts": 8}):
+                _json(path, {**_config(), **changed})
+                with self.subTest(changed=changed), self.assertRaises(ContractError):
+                    parse_qwen_dense_config(path)
+
     def test_synthetic_conversion_is_deterministic_and_complete(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)

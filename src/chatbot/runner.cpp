@@ -28,7 +28,7 @@ namespace snnbase_experiments::chatbot {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-constexpr std::int64_t runner_checkpoint_format_version = 2;
+constexpr std::int64_t runner_checkpoint_format_version = 3;
 constexpr double pi = 3.141592653589793238462643383279502884;
 
 void set_default_rng_state(const torch::Device& device,
@@ -334,7 +334,9 @@ torch::Tensor model_integer_signature(
        static_cast<std::int64_t>(config.query_key_normalization),
        static_cast<std::int64_t>(config.lif.learn_threshold),
        static_cast<std::int64_t>(config.lif.learn_leak),
-       static_cast<std::int64_t>(config.lif.signed_spikes)},
+       static_cast<std::int64_t>(config.lif.signed_spikes),
+       static_cast<std::int64_t>(config.temporal_spiking),
+       static_cast<std::int64_t>(config.tie_word_embeddings)},
       torch::TensorOptions().dtype(torch::kInt64));
 }
 
@@ -344,7 +346,7 @@ torch::Tensor model_floating_signature(
       {config.rms_epsilon, config.rope_base,
        static_cast<double>(config.lif.initial_threshold),
        static_cast<double>(config.lif.initial_leak),
-       static_cast<double>(config.lif.surrogate_slope)},
+       static_cast<double>(config.lif.surrogate_slope), config.temporal_decay},
       torch::TensorOptions().dtype(torch::kFloat64));
 }
 
@@ -504,6 +506,8 @@ class ProtocolParser {
             limits_.maximum_eos_tokens, "eos_token_ids");
       } else if (key == "reset_state") {
         request.reset_state = parse_bool();
+      } else if (key == "prefill_chunk_size") {
+        request.generation.prefill_chunk_size = checked_size(parse_uint64());
       } else {
         fail("unknown request field: " + key);
       }
@@ -567,12 +571,14 @@ class ProtocolParser {
     if (request.operation == "generate") {
       validate({"input_ids", "max_new_tokens", "seed",
                 "sampling_vocabulary_size"},
-               {"temperature", "top_k", "top_p", "eos_token_ids"});
+               {"temperature", "top_k", "top_p", "eos_token_ids", "prefill_chunk_size"});
     } else if (request.operation == "inspect") {
       validate({"input_ids", "probe_token_ids", "top_k"}, {});
     } else if (request.operation == "train" ||
                request.operation == "evaluate") {
       validate({"input_ids"}, {"loss_mask", "reset_state"});
+    } else if (request.operation == "calibrate") {
+      validate({"input_ids"}, {"reset_state"});
     } else if (request.operation == "metadata" ||
                request.operation == "reset" ||
                request.operation == "flush" ||
@@ -1012,14 +1018,25 @@ GenerationResult Runner::generate(
   const auto started = Clock::now();
   auto tokens = make_token_tensor(input_ids, impl_->selected_device);
   snnbase::language::KeyValueCache cache;
-  auto output = impl_->model->forward_cached(tokens, cache);
-  GenerationResult result;
-  result.output_ids.reserve(generation.maximum_new_tokens);
+  snnbase::language::DecoderOutput output;
   double rate_sum = 0.0;
   std::size_t rate_samples = 0;
+  const auto chunk = generation.prefill_chunk_size == 0U
+                         ? tokens.size(1)
+                         : static_cast<std::int64_t>(std::min(
+                               generation.prefill_chunk_size, input_ids.size()));
+  for (std::int64_t start = 0; start < tokens.size(1); start += chunk) {
+    const auto end = std::min(start + chunk, tokens.size(1));
+    output = impl_->model->forward_last_cached(
+        tokens.slice(1, start, end), cache);
+    const auto processed_tokens = static_cast<std::size_t>(end - start);
+    rate_sum += output.spikes.mean_rate.item<double>() *
+                static_cast<double>(processed_tokens);
+    rate_samples += processed_tokens;
+  }
+  GenerationResult result;
+  result.output_ids.reserve(generation.maximum_new_tokens);
   for (std::size_t index = 0; index < generation.maximum_new_tokens; ++index) {
-    rate_sum += output.spikes.mean_rate.item<double>();
-    ++rate_samples;
     const auto logits = output.logits.select(1, output.logits.size(1) - 1);
     const auto next = sample_next_token(logits, generation);
     const auto token = next.item<std::int64_t>();
@@ -1034,7 +1051,9 @@ GenerationResult Runner::generate(
       break;
     }
     if (index + 1U < generation.maximum_new_tokens) {
-      output = impl_->model->forward_cached(next, cache);
+      output = impl_->model->forward_last_cached(next, cache);
+      rate_sum += output.spikes.mean_rate.item<double>();
+      ++rate_samples;
     }
   }
   const auto elapsed = std::chrono::duration<double, std::milli>(
@@ -1079,7 +1098,8 @@ LogitInspection Runner::inspect_next_token_logits(
   impl_->model->eval();
   impl_->model->reset_state();
   const auto tokens = make_token_tensor(input_ids, impl_->selected_device);
-  const auto output = impl_->model->forward(tokens);
+  snnbase::language::KeyValueCache cache;
+  const auto output = impl_->model->forward_last_cached(tokens, cache);
   const auto final_logits = output.logits
                                 .select(0, 0)
                                 .select(0, output.logits.size(1) - 1)
@@ -1105,6 +1125,32 @@ LogitInspection Runner::inspect_next_token_logits(
   impl_->model->train(was_training);
   impl_->model->reset_state();
   return result;
+}
+
+void Runner::calibrate(const std::span<const std::int64_t> input_ids,
+                       const bool reset) {
+  if (!impl_->config.model.temporal_spiking) {
+    throw std::invalid_argument("calibration requires temporal_spiking");
+  }
+  if (impl_->pending_accumulation_steps != 0U) {
+    throw std::invalid_argument("flush pending gradients before calibration");
+  }
+  const auto tokens = make_token_tensor(input_ids, impl_->selected_device);
+  torch::NoGradGuard no_grad;
+  const auto was_training = impl_->model->is_training();
+  impl_->model->eval();
+  if (reset) impl_->model->reset_spike_calibration();
+  impl_->model->set_calibration_enabled(true);
+  try {
+    snnbase::language::KeyValueCache cache;
+    static_cast<void>(impl_->model->forward_last_cached(tokens, cache));
+  } catch (...) {
+    impl_->model->set_calibration_enabled(false);
+    impl_->model->train(was_training);
+    throw;
+  }
+  impl_->model->set_calibration_enabled(false);
+  impl_->model->train(was_training);
 }
 
 LanguageModelMetrics Runner::train_step(
@@ -1272,99 +1318,120 @@ void Runner::save_checkpoint(const std::filesystem::path& path) const {
   }
 }
 
-void Runner::load_checkpoint(const std::filesystem::path& path) {
+void Runner::load_checkpoint(const std::filesystem::path& path,
+                             const bool weights_only) {
   if (impl_->pending_accumulation_steps != 0U) {
     throw std::runtime_error(
         "cannot replace a runner with pending gradient accumulation");
   }
   torch::serialize::InputArchive archive;
-  archive.load_from(path.string(), impl_->selected_device);
+  // Do not allocate saved optimizer tensors on a destination GPU when only
+  // inference parameters are requested. They remain transient host storage.
+  archive.load_from(path.string(), weights_only ? torch::Device(torch::kCPU)
+                                               : impl_->selected_device);
   torch::Tensor format_version;
   if (!archive.try_read("format_version", format_version) ||
-      format_version.item<std::int64_t>() !=
-          runner_checkpoint_format_version) {
+      format_version.numel() != 1 ||
+      (format_version.item<std::int64_t>() != 2 &&
+       format_version.item<std::int64_t>() != runner_checkpoint_format_version)) {
     throw std::runtime_error("unsupported chatbot runner checkpoint format");
   }
+  const bool legacy = format_version.item<std::int64_t>() == 2;
+  if (legacy && (impl_->config.model.temporal_spiking ||
+                 !impl_->config.model.tie_word_embeddings ||
+                 impl_->config.model.temporal_decay != 0.0)) {
+    throw std::runtime_error("legacy checkpoint cannot contain temporal encoding or untied embeddings");
+  }
   require_signature(archive, "model_integer_signature",
-                    model_integer_signature(impl_->config.model));
+                    legacy ? model_integer_signature(impl_->config.model).slice(0, 0, 14)
+                           : model_integer_signature(impl_->config.model));
   require_signature(archive, "model_floating_signature",
-                    model_floating_signature(impl_->config.model));
-  require_signature(archive, "runner_integer_signature",
-                    runner_integer_signature(impl_->config));
-  require_signature(archive, "runner_floating_signature",
-                    runner_floating_signature(impl_->config));
+                    legacy ? model_floating_signature(impl_->config.model).slice(0, 0, 5)
+                           : model_floating_signature(impl_->config.model));
+  if (weights_only) {
+    torch::serialize::InputArchive model_archive;
+    if (!archive.try_read("model", model_archive)) {
+      throw std::runtime_error("chatbot checkpoint requires model state");
+    }
+    impl_->model->load(model_archive);
+  } else {
+    require_signature(archive, "runner_integer_signature",
+                      runner_integer_signature(impl_->config));
+    require_signature(archive, "runner_floating_signature",
+                      runner_floating_signature(impl_->config));
 
-  torch::Tensor restored_learning_rate_tensor;
-  if (!archive.try_read("current_learning_rate",
-                        restored_learning_rate_tensor) ||
-      restored_learning_rate_tensor.scalar_type() != torch::kFloat64 ||
-      restored_learning_rate_tensor.numel() != 1) {
-    throw std::runtime_error(
-        "chatbot checkpoint has invalid current learning rate");
-  }
-  const auto restored_learning_rate =
-      restored_learning_rate_tensor.to(torch::kCPU).item<double>();
-  if (!std::isfinite(restored_learning_rate) ||
-      restored_learning_rate < 0.0 ||
-      restored_learning_rate > impl_->config.learning_rate) {
-    throw std::runtime_error(
-        "chatbot checkpoint has invalid current learning rate");
-  }
+    torch::Tensor restored_learning_rate_tensor;
+    if (!archive.try_read("current_learning_rate",
+                          restored_learning_rate_tensor) ||
+        restored_learning_rate_tensor.scalar_type() != torch::kFloat64 ||
+        restored_learning_rate_tensor.numel() != 1) {
+      throw std::runtime_error(
+          "chatbot checkpoint has invalid current learning rate");
+    }
+    const auto restored_learning_rate =
+        restored_learning_rate_tensor.to(torch::kCPU).item<double>();
+    if (!std::isfinite(restored_learning_rate) ||
+        restored_learning_rate < 0.0 ||
+        restored_learning_rate > impl_->config.learning_rate) {
+      throw std::runtime_error(
+          "chatbot checkpoint has invalid current learning rate");
+    }
 
-  torch::Tensor source_device_type;
-  if (!archive.try_read("selected_device_type", source_device_type) ||
-      source_device_type.scalar_type() != torch::kInt64 ||
-      source_device_type.numel() != 1) {
-    throw std::runtime_error(
-        "chatbot checkpoint has invalid selected device type");
-  }
-  const auto saved_device_type =
-      source_device_type.to(torch::kCPU).item<std::int64_t>();
-  const auto current_device_type =
-      static_cast<std::int64_t>(impl_->selected_device.type());
-  if (saved_device_type != current_device_type) {
-    throw std::runtime_error(
-        "chatbot checkpoint device type does not match the current runner");
-  }
+    torch::Tensor source_device_type;
+    if (!archive.try_read("selected_device_type", source_device_type) ||
+        source_device_type.scalar_type() != torch::kInt64 ||
+        source_device_type.numel() != 1) {
+      throw std::runtime_error(
+          "chatbot checkpoint has invalid selected device type");
+    }
+    const auto saved_device_type =
+        source_device_type.to(torch::kCPU).item<std::int64_t>();
+    const auto current_device_type =
+        static_cast<std::int64_t>(impl_->selected_device.type());
+    if (saved_device_type != current_device_type) {
+      throw std::runtime_error(
+          "chatbot checkpoint device type does not match the current runner");
+    }
 
-  torch::serialize::InputArchive model_archive;
-  torch::serialize::InputArchive optimizer_archive;
-  if (!archive.try_read("model", model_archive) ||
-      !archive.try_read("optimizer", optimizer_archive)) {
-    throw std::runtime_error(
-        "chatbot checkpoint requires model and optimizer state");
-  }
-  impl_->model->load(model_archive);
-  impl_->optimizer.load(optimizer_archive);
+    torch::serialize::InputArchive model_archive;
+    torch::serialize::InputArchive optimizer_archive;
+    if (!archive.try_read("model", model_archive) ||
+        !archive.try_read("optimizer", optimizer_archive)) {
+      throw std::runtime_error(
+          "chatbot checkpoint requires model and optimizer state");
+    }
+    impl_->model->load(model_archive);
+    impl_->optimizer.load(optimizer_archive);
 
-  torch::Tensor counters;
-  if (!archive.try_read("training_counters", counters) ||
-      counters.scalar_type() != torch::kInt64 || counters.numel() != 2) {
-    throw std::runtime_error(
-        "chatbot checkpoint has invalid training counters");
+    torch::Tensor counters;
+    if (!archive.try_read("training_counters", counters) ||
+        counters.scalar_type() != torch::kInt64 || counters.numel() != 2) {
+      throw std::runtime_error(
+          "chatbot checkpoint has invalid training counters");
+    }
+    counters = counters.to(torch::kCPU).reshape({-1});
+    const auto micro_batches = counters[0].item<std::int64_t>();
+    const auto optimizer_steps = counters[1].item<std::int64_t>();
+    if (micro_batches < 0 || optimizer_steps < 0) {
+      throw std::runtime_error(
+          "chatbot checkpoint has negative training counters");
+    }
+    const auto expected_learning_rate = learning_rate_for_step(
+        impl_->config,
+        optimizer_steps == 0 ? 1U : static_cast<std::uint64_t>(optimizer_steps));
+    if (restored_learning_rate != expected_learning_rate) {
+      throw std::runtime_error(
+          "chatbot checkpoint current learning rate is inconsistent with its "
+          "training counters");
+    }
+    // LibTorch 2.3 does not restore optimizer-group learning-rate options while
+    // newer versions do. The validated explicit scalar is authoritative and is
+    // applied uniformly so resume metadata and the next update are portable.
+    impl_->set_learning_rate(restored_learning_rate);
+    impl_->micro_batch_count = static_cast<std::uint64_t>(micro_batches);
+    impl_->optimizer_step_count = static_cast<std::uint64_t>(optimizer_steps);
+    impl_->pending_accumulation_steps = 0U;
   }
-  counters = counters.to(torch::kCPU).reshape({-1});
-  const auto micro_batches = counters[0].item<std::int64_t>();
-  const auto optimizer_steps = counters[1].item<std::int64_t>();
-  if (micro_batches < 0 || optimizer_steps < 0) {
-    throw std::runtime_error(
-        "chatbot checkpoint has negative training counters");
-  }
-  const auto expected_learning_rate = learning_rate_for_step(
-      impl_->config,
-      optimizer_steps == 0 ? 1U : static_cast<std::uint64_t>(optimizer_steps));
-  if (restored_learning_rate != expected_learning_rate) {
-    throw std::runtime_error(
-        "chatbot checkpoint current learning rate is inconsistent with its "
-        "training counters");
-  }
-  // LibTorch 2.3 does not restore optimizer-group learning-rate options while
-  // newer versions do. The validated explicit scalar is authoritative and is
-  // applied uniformly so resume metadata and the next update are portable.
-  impl_->set_learning_rate(restored_learning_rate);
-  impl_->micro_batch_count = static_cast<std::uint64_t>(micro_batches);
-  impl_->optimizer_step_count = static_cast<std::uint64_t>(optimizer_steps);
-  impl_->pending_accumulation_steps = 0U;
 
   torch::Tensor has_qwen_weights;
   if (!archive.try_read("has_qwen_weights", has_qwen_weights) ||
@@ -1424,23 +1491,33 @@ void Runner::load_checkpoint(const std::filesystem::path& path) {
     }
   }
 
-  torch::Tensor cpu_rng_state;
-  if (!archive.try_read("cpu_rng_state", cpu_rng_state)) {
-    throw std::runtime_error("chatbot checkpoint is missing CPU RNG state");
-  }
-  set_default_rng_state(torch::Device(torch::kCPU),
-                        cpu_rng_state.to(torch::kCPU));
-  if (impl_->selected_device.is_cuda()) {
-    torch::Tensor device_rng_state;
-    if (!archive.try_read("device_rng_state", device_rng_state)) {
-      throw std::runtime_error(
-          "CUDA resume requires a checkpoint with CUDA RNG state");
+  if (!weights_only) {
+    torch::Tensor cpu_rng_state;
+    if (!archive.try_read("cpu_rng_state", cpu_rng_state)) {
+      throw std::runtime_error("chatbot checkpoint is missing CPU RNG state");
     }
-    set_default_rng_state(impl_->selected_device,
-                          device_rng_state.to(impl_->selected_device));
+    set_default_rng_state(torch::Device(torch::kCPU),
+                          cpu_rng_state.to(torch::kCPU));
+    if (impl_->selected_device.is_cuda()) {
+      torch::Tensor device_rng_state;
+      if (!archive.try_read("device_rng_state", device_rng_state)) {
+        throw std::runtime_error(
+            "CUDA resume requires a checkpoint with CUDA RNG state");
+      }
+      set_default_rng_state(impl_->selected_device,
+                            device_rng_state.to(impl_->selected_device));
+    }
   }
   impl_->model->to(impl_->selected_device);
   impl_->model->reset_state();
+  if (weights_only) {
+    impl_->optimizer.state().clear();
+    impl_->optimizer.zero_grad();
+    impl_->micro_batch_count = 0U;
+    impl_->optimizer_step_count = 0U;
+    impl_->pending_accumulation_steps = 0U;
+    impl_->set_learning_rate(learning_rate_for_step(impl_->config, 1U));
+  }
 }
 
 const RunnerConfig& Runner::config() const noexcept { return impl_->config; }
@@ -1565,6 +1642,11 @@ ProtocolServeResult serve_token_protocol(
                << (model.query_key_normalization ? "true" : "false")
                << ",\"spiking\":"
                << (model.spiking ? "true" : "false")
+               << ",\"temporal_spiking\":"
+               << (model.temporal_spiking ? "true" : "false")
+               << ",\"temporal_decay\":" << model.temporal_decay
+               << ",\"tie_word_embeddings\":"
+               << (model.tie_word_embeddings ? "true" : "false")
                << ",\"build_provenance\":{\"experiments\":{\"revision\":\""
                << json_escape(
                       runner.config().build_provenance.experiments.revision)
@@ -1659,6 +1741,17 @@ ProtocolServeResult serve_token_protocol(
         output << ",\"top_k\":";
         write_values(inspection.top_k);
         output << "}}\n";
+        output.flush();
+        continue;
+      }
+      if (request.operation == "calibrate") {
+        if (request.input_ids.empty()) {
+          throw std::invalid_argument("calibrate requires nonempty input_ids");
+        }
+        checkpoint_current = false;
+        runner.calibrate(request.input_ids, request.reset_state);
+        write_prefix(output, request_id, true);
+        output << ",\"calibrated_tokens\":" << request.input_ids.size() << "}\n";
         output.flush();
         continue;
       }

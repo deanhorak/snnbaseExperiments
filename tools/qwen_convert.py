@@ -12,6 +12,7 @@ import shutil
 import struct
 import sys
 import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Mapping, Sequence
@@ -42,8 +43,7 @@ FLAG_SILU = 1 << 2
 FLAG_NO_ATTENTION_BIAS = 1 << 3
 FLAG_NO_SLIDING_WINDOW = 1 << 4
 QWEN_REQUIRED_FLAGS = (
-    FLAG_TIED_EMBEDDINGS
-    | FLAG_QUERY_KEY_NORMALIZATION
+    FLAG_QUERY_KEY_NORMALIZATION
     | FLAG_SILU
     | FLAG_NO_ATTENTION_BIAS
     | FLAG_NO_SLIDING_WINDOW
@@ -74,7 +74,11 @@ class QwenDenseConfig:
     feed_forward_dimension: int
     rms_epsilon: float
     rope_base: float
-    flags: int = QWEN_REQUIRED_FLAGS
+    flags: int = QWEN_REQUIRED_FLAGS | FLAG_TIED_EMBEDDINGS
+
+    @property
+    def tied_output_projection(self) -> bool:
+        return bool(self.flags & FLAG_TIED_EMBEDDINGS)
 
     def archive_block(self) -> bytes:
         return CONFIG_BLOCK.pack(
@@ -108,7 +112,7 @@ class QwenDenseConfig:
             "hidden_activation": "silu",
             "attention_bias": False,
             "sliding_window": False,
-            "tied_output_projection": True,
+            "tied_output_projection": self.tied_output_projection,
         }
 
 
@@ -126,6 +130,7 @@ class SafeTensorEntry:
     shape: tuple[int, ...]
     absolute_offset: int
     length: int
+    source_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -152,7 +157,6 @@ def parse_qwen_dense_config(path: Path) -> QwenDenseConfig:
         "model_type": "qwen3",
         "attention_bias": False,
         "hidden_act": "silu",
-        "tie_word_embeddings": True,
         "use_sliding_window": False,
         "sliding_window": None,
         "rope_scaling": None,
@@ -162,6 +166,12 @@ def parse_qwen_dense_config(path: Path) -> QwenDenseConfig:
             raise ContractError(
                 f"unsupported Qwen config {key}: expected {expected!r}, found {raw.get(key)!r}"
             )
+    if not isinstance(raw.get("tie_word_embeddings"), bool):
+        raise ContractError("Qwen config tie_word_embeddings must be a boolean")
+    if any(raw.get(key) not in (None, 0) for key in ("num_experts", "num_local_experts")):
+        raise ContractError("MoE Qwen checkpoints are unsupported; use a dense Qwen3 model")
+    if raw.get("partial_rotary_factor", 1.0) != 1.0:
+        raise ContractError("partial rotary embeddings are unsupported")
     if raw.get("torch_dtype") not in ("bfloat16", "bf16"):
         raise ContractError(
             "the dense import contract requires a BF16 source checkpoint"
@@ -178,6 +188,7 @@ def parse_qwen_dense_config(path: Path) -> QwenDenseConfig:
         feed_forward_dimension=_positive_int(raw, "intermediate_size"),
         rms_epsilon=float(raw.get("rms_norm_eps", 0.0)),
         rope_base=float(raw.get("rope_theta", 0.0)),
+        flags=QWEN_REQUIRED_FLAGS | (FLAG_TIED_EMBEDDINGS if raw["tie_word_embeddings"] else 0),
     )
     if (
         config.query_head_count % config.key_value_head_count != 0
@@ -266,6 +277,8 @@ def expected_tensor_mappings(config: QwenDenseConfig) -> list[TensorMapping]:
             ]
         )
     mappings.append(TensorMapping("model.norm.weight", "final_norm.weight", (hidden,)))
+    if not config.tied_output_projection:
+        mappings.append(TensorMapping("lm_head.weight", "lm_head.weight", (config.vocabulary_size, hidden)))
     return mappings
 
 
@@ -356,7 +369,7 @@ def read_safetensors_inventory(path: Path) -> dict[str, SafeTensorEntry]:
             or data_start + end > file_size
         ):
             raise ContractError(f"safetensors data range for {name} is invalid")
-        entry = SafeTensorEntry(name, dtype, shape, data_start + begin, end - begin)
+        entry = SafeTensorEntry(name, dtype, shape, data_start + begin, end - begin, path)
         result[name] = entry
         intervals.append((begin, end, name))
     if not result or len(result) > MAX_TENSOR_COUNT:
@@ -377,10 +390,17 @@ def read_safetensors_inventory(path: Path) -> dict[str, SafeTensorEntry]:
 
 
 def validate_inventory(
-    checkpoint: Path, config: QwenDenseConfig
+    checkpoint: Path | Sequence[Path], config: QwenDenseConfig
 ) -> tuple[list[TensorMapping], dict[str, SafeTensorEntry]]:
     mappings = expected_tensor_mappings(config)
-    inventory = read_safetensors_inventory(checkpoint)
+    checkpoints = [checkpoint] if isinstance(checkpoint, Path) else list(checkpoint)
+    inventory: dict[str, SafeTensorEntry] = {}
+    for selected in checkpoints:
+        shard = read_safetensors_inventory(selected)
+        duplicates = set(inventory) & set(shard)
+        if duplicates:
+            raise ContractError(f"duplicate tensors across safetensor shards: {sorted(duplicates)[:8]}")
+        inventory.update(shard)
     expected_names = {mapping.source_name for mapping in mappings}
     actual_names = set(inventory)
     if actual_names != expected_names:
@@ -402,6 +422,40 @@ def validate_inventory(
                 f"duplicate destination tensor: {mapping.destination_name}"
             )
         destinations.add(mapping.destination_name)
+    return mappings, inventory
+
+
+def checkpoint_identity(assets: VerifiedAssets) -> dict[str, Any]:
+    """Preserve the original file hash; bind sharded models to every source file."""
+    records = sorted(assets.manifest["weight_files"], key=lambda item: item["path"])
+    if len(records) == 1 and records[0]["path"].endswith(".safetensors"):
+        return records[0]
+    canonical = json.dumps(records, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    return {
+        "path": "model.safetensors.index.json",
+        "sha256": hashlib.sha256(canonical).hexdigest(),
+        "size_bytes": sum(record["size_bytes"] for record in records),
+        "fingerprint_algorithm": "sha256-canonical-weight-file-manifest-v1",
+        "files": records,
+    }
+
+
+def validate_checkpoint_shards(assets: VerifiedAssets, config: QwenDenseConfig) -> tuple[list[TensorMapping], dict[str, SafeTensorEntry]]:
+    records = assets.manifest["weight_files"]
+    paths = sorted(record["path"] for record in records if record["path"].endswith(".safetensors"))
+    if not paths or any(not record["path"].endswith(".safetensors") and record["path"] != "model.safetensors.index.json" for record in records):
+        raise ContractError("dense conversion requires BF16 safetensors weights (optionally indexed shards)")
+    mappings, inventory = validate_inventory([assets.root / path for path in paths], config)
+    if len(paths) > 1 or any(record["path"] == "model.safetensors.index.json" for record in records):
+        if not any(record["path"] == "model.safetensors.index.json" for record in records):
+            raise ContractError("sharded checkpoints require a verified model.safetensors.index.json")
+        index = load_json(assets.root / "model.safetensors.index.json")
+        weight_map = index.get("weight_map") if isinstance(index, Mapping) else None
+        if not isinstance(weight_map, Mapping) or set(weight_map) != set(inventory):
+            raise ContractError("safetensors shard index does not cover the exact tensor inventory")
+        for name, entry in inventory.items():
+            if weight_map[name] not in paths or entry.source_path != (assets.root / weight_map[name]).resolve():
+                raise ContractError(f"safetensors shard index points to the wrong file for {name}")
     return mappings, inventory
 
 
@@ -431,11 +485,7 @@ def inventory_document(
     mappings: Sequence[TensorMapping],
     inventory: Mapping[str, SafeTensorEntry],
 ) -> dict[str, Any]:
-    checkpoint_record = next(
-        record
-        for record in assets.manifest["weight_files"]
-        if record["path"] == "model.safetensors"
-    )
+    checkpoint_record = checkpoint_identity(assets)
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": INVENTORY_KIND,
@@ -452,9 +502,9 @@ def inventory_document(
             inventory[item.source_name].length for item in mappings
         ),
         "tied_output_projection": {
-            "source_destination": "token_embedding.weight",
+            "source_destination": "token_embedding.weight" if config.tied_output_projection else "lm_head.weight",
             "operation": "transpose-at-readout",
-            "separate_lm_head": False,
+            "separate_lm_head": not config.tied_output_projection,
         },
         "dense_tensors": [
             {
@@ -571,18 +621,13 @@ def convert_archive(
     temporary = Path(
         tempfile.mkdtemp(prefix=f".{output_dir.name}.", dir=output_dir.parent)
     )
-    checkpoint = assets.root / "model.safetensors"
     try:
-        checkpoint_record = next(
-            record
-            for record in assets.manifest["weight_files"]
-            if record["path"] == "model.safetensors"
-        )
+        checkpoint_record = checkpoint_identity(assets)
         source_checkpoint_sha = checkpoint_record["sha256"]
         config_sha = sha256_file(assets.root / "config.json")
         tensor_hashes = {
             mapping.source_name: _hash_region(
-                checkpoint,
+                inventory[mapping.source_name].source_path or assets.root / "model.safetensors",
                 inventory[mapping.source_name].absolute_offset,
                 inventory[mapping.source_name].length,
             )
@@ -631,7 +676,8 @@ def convert_archive(
             bytes(32),
             assets.revision.encode("ascii"),
         )
-        with archive_path.open("xb+") as output, checkpoint.open("rb") as source_stream:
+        with archive_path.open("xb+") as output, ExitStack() as source_streams:
+            streams: dict[Path, BinaryIO] = {}
             output.write(placeholder)
             output.write(metadata)
             padding = payload_offset - output.tell()
@@ -644,8 +690,11 @@ def convert_archive(
             for tensor in archive_tensors:
                 if output.tell() != tensor.archive_offset:
                     raise ContractError("archive tensor offset calculation disagrees")
+                source_path = tensor.source.source_path or assets.root / "model.safetensors"
+                if source_path not in streams:
+                    streams[source_path] = source_streams.enter_context(source_path.open("rb"))
                 _copy_region(
-                    source_stream,
+                    streams[source_path],
                     output,
                     tensor.source.absolute_offset,
                     tensor.source.length,
@@ -723,6 +772,10 @@ def _contract_arguments(parser: argparse.ArgumentParser) -> None:
         required=True,
         help=f"Phase 0: {PHASE0_TOKENIZER_FINGERPRINT}",
     )
+    parser.add_argument(
+        "--allow-unpinned-dense-model", action="store_true",
+        help="Explicitly allow another verified dense Qwen3 architecture; this does not assert oracle or quality validation.",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -751,9 +804,9 @@ def _load_plan(
         arguments.model_id,
         arguments.revision,
         arguments.expected_tokenizer_fingerprint,
-    ) != (PHASE0_MODEL_ID, PHASE0_REVISION, PHASE0_TOKENIZER_FINGERPRINT):
+    ) != (PHASE0_MODEL_ID, PHASE0_REVISION, PHASE0_TOKENIZER_FINGERPRINT) and not arguments.allow_unpinned_dense_model:
         raise ContractError(
-            "Qwen dense archive v1 is restricted to the exact Phase 0 model pin"
+            "the default conversion requires the exact Phase 0 model pin; pass --allow-unpinned-dense-model for another verified dense Qwen3 model"
         )
     assets = verify_asset_manifest(
         arguments.assets_dir,
@@ -763,16 +816,7 @@ def _load_plan(
         require_weights=True,
     )
     config = parse_qwen_dense_config(assets.root / "config.json")
-    checkpoint_paths = [
-        record["path"]
-        for record in assets.manifest["weight_files"]
-        if record["path"].endswith(".safetensors")
-    ]
-    if checkpoint_paths != ["model.safetensors"]:
-        raise ContractError(
-            "Qwen dense converter v1 requires exactly model.safetensors"
-        )
-    mappings, inventory = validate_inventory(assets.root / "model.safetensors", config)
+    mappings, inventory = validate_checkpoint_shards(assets, config)
     return assets, config, mappings, inventory
 
 

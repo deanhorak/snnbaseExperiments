@@ -50,6 +50,8 @@ struct GenerationConfig {
   std::size_t top_k{};
   double top_p{1.0};
   std::vector<std::int64_t> eos_token_ids{};
+  // Bounds prefill attention workspace; zero processes the prompt in one call.
+  std::size_t prefill_chunk_size{128};
 };
 
 struct GenerationMetrics {
@@ -149,12 +151,20 @@ class Runner {
       std::span<const std::uint8_t> loss_mask = {});
   [[nodiscard]] TrainingState flush_optimizer();
 
+  // Explicit dense reference pass that records temporal encoder scales.
+  // Calibration must use training data, before held-out evaluation.
+  void calibrate(std::span<const std::int64_t> input_ids, bool reset = false);
+
   void reset_state() noexcept;
   [[nodiscard]] QwenDenseLoadResult load_qwen_weights(
       const std::filesystem::path& archive,
       const QwenDenseArchiveIdentity& identity);
   void save_checkpoint(const std::filesystem::path& path) const;
-  void load_checkpoint(const std::filesystem::path& path);
+  // weights_only loads parameters/calibration/provenance onto this runner's
+  // device with a fresh optimizer; ordinary resume also restores optimizer,
+  // counters and RNG state and therefore requires a matching device type.
+  void load_checkpoint(const std::filesystem::path& path,
+                       bool weights_only = false);
 
   [[nodiscard]] const RunnerConfig& config() const noexcept;
   [[nodiscard]] std::string device() const;

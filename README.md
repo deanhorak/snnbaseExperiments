@@ -20,6 +20,16 @@ sweep are recorded in
 
 ### Abstract temporal SNN text generation
 
+The [temporal LLM experiment](docs/TEMPORAL_LLM.md) extends this track to a
+Qwen-compatible `snnbase::language::Decoder`: verified pretrained weights,
+full-vocabulary generation, calibrated signed spike encoding, optional
+cross-token neuronal activity, and checkpointed surrogate-gradient training.
+`tools/temporal_llm.py` provides small and Qwen3-0.6B profiles and custom model
+geometry, memory planning, calibration, evaluation, and interactive generation.
+The original entry point also accepts `tools/temporal_chat.py --llm`.
+Attention and weight projections remain dense; measurements of language quality
+and runtime are separate from spike activity.
+
 The CPU-only [temporal chat experiment](docs/TEMPORAL_CHAT.md) borrows the
 pinned Qwen3 tokenizer and trains a small recurrent spiking model with
 dendritic coincidence, excitation/inhibition, firing adaptation, and

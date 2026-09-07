@@ -14,6 +14,9 @@ inline constexpr std::uint32_t qwen_dense_archive_version = 1;
 
 // Every field is required. The identity comes from the immutable conversion
 // manifest rather than from an untrusted archive's self-description.
+// For indexed shards, source_checkpoint_sha256 is the converter manifest's
+// canonical weight-file-manifest digest, covering every shard and its index.
+// Geometry and tied/untied readout are verified against DecoderConfig.
 struct QwenDenseArchiveIdentity {
   std::string model_id;
   std::string revision;

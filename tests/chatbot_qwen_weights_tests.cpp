@@ -31,9 +31,10 @@ std::uint8_t hex_nibble(const char value) {
   throw std::runtime_error("invalid checked-in archive hex fixture");
 }
 
-std::filesystem::path materialize_fixture() {
+std::filesystem::path materialize_fixture(
+    const std::string& name = "qwen_dense_v1_tiny.hex") {
   const auto source = std::filesystem::path(__FILE__).parent_path() /
-                      "fixtures/chatbot/qwen_dense_v1_tiny.hex";
+                      "fixtures/chatbot" / name;
   std::ifstream input(source);
   if (!input) {
     throw std::runtime_error("could not open Qwen archive hex fixture");
@@ -143,8 +144,56 @@ void test_exact_dense_load_and_lif_preservation() {
   std::filesystem::remove(archive);
 }
 
+void test_untied_sharded_second_geometry() {
+  const auto archive = materialize_fixture("qwen_dense_v1_untied_sharded.hex");
+  auto config = tiny_config();
+  config.model_dimension = 12;
+  config.layer_count = 3;
+  config.query_head_count = 4;
+  config.key_value_head_count = 2;
+  config.feed_forward_dimension = 20;
+  const QwenDenseArchiveIdentity identity{
+      .model_id = "tests/Qwen3Tiny",
+      .revision = "0123456789abcdef0123456789abcdef01234567",
+      .archive_sha256 =
+          "bee0456d510292bce99249613fa24be16ecc952cda6a32f12ed3f522729a0be5",
+      .source_checkpoint_sha256 =
+          "2fb837de9ac08ac275939fb0fa77b12fb99a7d979526df0dbae3f553ae3c4d8a",
+      .config_sha256 =
+          "aff0e31b326e623359a1b88d95397cc669fa2b3c1bed31730835fa0b6fef17c2",
+      .tokenizer_fingerprint_sha256 =
+          "e2f448429ba76678d32ed7cf99e8d9adb031944a11a170771365a0f76f29a742",
+  };
+  snnbase::language::Decoder tied_decoder(config);
+  const auto tied_before = parameter(tied_decoder, "token_embedding.weight").clone();
+  bool rejected = false;
+  try {
+    static_cast<void>(load_qwen_dense_weights(tied_decoder, archive, identity));
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  require(rejected, "untied archive was accepted by a tied Decoder");
+  require(torch::equal(tied_before, parameter(tied_decoder, "token_embedding.weight")),
+          "tied/untied mismatch mutated the Decoder");
+  config.tie_word_embeddings = false;
+  snnbase::language::Decoder decoder(config);
+  const auto head_before = parameter(decoder, "lm_head.weight").clone();
+  const auto result = load_qwen_dense_weights(decoder, archive, identity);
+  require(result.loaded_tensor_count == 36U &&
+              result.untouched_runtime_parameter_count == 12U &&
+              result.loaded_payload_bytes == 8808U,
+          "untied second-geometry archive coverage is incomplete");
+  require(!torch::equal(head_before, parameter(decoder, "lm_head.weight")),
+          "untied language-model head was not imported");
+  require(parameter(decoder, "lm_head.weight").data_ptr() !=
+              parameter(decoder, "token_embedding.weight").data_ptr(),
+          "untied language-model head shares embedding storage");
+  std::filesystem::remove(archive);
+}
+
 }  // namespace
 
 int main() {
   test_exact_dense_load_and_lif_preservation();
+  test_untied_sharded_second_geometry();
 }

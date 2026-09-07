@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "tiny",
+  "description": "Small randomly initialized decoder with the complete Qwen tokenizer vocabulary. Exercises training and generation; has no pretrained language ability.",
+  "tokenizer": {
+    "assets_path": "artifacts/chatbot/qwen3-0.6b-base",
+    "fingerprint_sha256": "6a4dac166a643066a1af821907cfd1c998c8a195e6458a90979953e848b6e237"
+  },
+  "model": {
+    "vocabulary_size": 151936,
+    "maximum_sequence_length": 128,
+    "model_dimension": 64,
+    "layer_count": 2,
+    "query_head_count": 4,
+    "key_value_head_count": 2,
+    "head_dimension": 16,
+    "feed_forward_dimension": 192,
+    "query_key_normalization": true,
+    "tied_embeddings": true,
+    "rms_epsilon": 0.000001,
+    "rope_base": 1000000.0,
+    "simulation_steps": 16,
+    "temporal_decay": 0.0
+  },
+  "initialization": {"type": "random"}
+}

@@ -31,7 +31,9 @@ constexpr std::uint32_t endian_marker = 0x01020304U;
 constexpr std::size_t header_size = 256U;
 constexpr std::size_t config_size = 88U;
 constexpr std::size_t tensor_prefix_size = 56U;
-constexpr std::uint32_t required_flags = 0x1fU;
+constexpr std::uint32_t tied_embeddings_flag = 0x01U;
+constexpr std::uint32_t required_flags = 0x1eU;
+constexpr std::uint32_t supported_flags = required_flags | tied_embeddings_flag;
 constexpr std::uint8_t dtype_bfloat16 = 1U;
 constexpr std::size_t maximum_tensor_count = 4096U;
 constexpr std::size_t maximum_rank = 8U;
@@ -346,6 +348,10 @@ std::vector<ExpectedTensor> expected_tensors(const DenseConfig& config) {
   }
   result.push_back(
       {"model.norm.weight", "final_norm.weight", {hidden}});
+  if ((config.flags & tied_embeddings_flag) == 0U) {
+    result.push_back({"lm_head.weight", "lm_head.weight",
+                      {static_cast<std::int64_t>(config.vocabulary_size), hidden}});
+  }
   return result;
 }
 
@@ -439,7 +445,9 @@ ParsedArchive parse_archive(const std::filesystem::path& path,
       result.config.head_dimension,
       result.config.feed_forward_dimension,
   };
-  if (read_u32(metadata, 84U) != 0U || result.config.flags != required_flags ||
+  if (read_u32(metadata, 84U) != 0U ||
+      (result.config.flags & required_flags) != required_flags ||
+      (result.config.flags & ~supported_flags) != 0U ||
       std::any_of(dimensions.begin(), dimensions.end(),
                   [maximum_dimension](const std::uint64_t value) {
                     return value == 0U || value > maximum_dimension;
@@ -565,6 +573,7 @@ void validate_decoder_config(const DenseConfig& archive,
       !positive_equal(archive.feed_forward_dimension,
                       decoder.feed_forward_dimension) ||
       !decoder.query_key_normalization || decoder.rms_epsilon != archive.rms_epsilon ||
+      decoder.tie_word_embeddings != ((archive.flags & tied_embeddings_flag) != 0U) ||
       decoder.rope_base != archive.rope_base) {
     throw std::runtime_error("Qwen archive and Decoder configuration mismatch");
   }
