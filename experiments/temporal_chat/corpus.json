@@ -1,0 +1,242 @@
+[
+  {
+    "split": "train",
+    "prompt": "What is the color of a tomato?",
+    "response": "red."
+  },
+  {
+    "split": "train",
+    "prompt": "What is the color of the sky?",
+    "response": "blue."
+  },
+  {
+    "split": "train",
+    "prompt": "What is the color of grass?",
+    "response": "green."
+  },
+  {
+    "split": "train",
+    "prompt": "What is the sound of a cat?",
+    "response": "meow."
+  },
+  {
+    "split": "train",
+    "prompt": "What is the sound of a dog?",
+    "response": "woof."
+  },
+  {
+    "split": "train",
+    "prompt": "What is the sound of a bird?",
+    "response": "chirp."
+  },
+  {
+    "split": "train",
+    "prompt": "Tell me the color of a tomato.",
+    "response": "red."
+  },
+  {
+    "split": "train",
+    "prompt": "Tell me the color of the sky.",
+    "response": "blue."
+  },
+  {
+    "split": "train",
+    "prompt": "Tell me the color of grass.",
+    "response": "green."
+  },
+  {
+    "split": "train",
+    "prompt": "Tell me the sound of a cat.",
+    "response": "meow."
+  },
+  {
+    "split": "train",
+    "prompt": "Tell me the sound of a dog.",
+    "response": "woof."
+  },
+  {
+    "split": "train",
+    "prompt": "Tell me the sound of a bird.",
+    "response": "chirp."
+  },
+  {
+    "split": "train",
+    "prompt": "Name the color of a tomato.",
+    "response": "red."
+  },
+  {
+    "split": "train",
+    "prompt": "Name the color of the sky.",
+    "response": "blue."
+  },
+  {
+    "split": "train",
+    "prompt": "Name the color of grass.",
+    "response": "green."
+  },
+  {
+    "split": "train",
+    "prompt": "Name the sound of a cat.",
+    "response": "meow."
+  },
+  {
+    "split": "train",
+    "prompt": "Name the sound of a dog.",
+    "response": "woof."
+  },
+  {
+    "split": "train",
+    "prompt": "Name the sound of a bird.",
+    "response": "chirp."
+  },
+  {
+    "split": "train",
+    "prompt": "Please tell me the color of a tomato.",
+    "response": "red."
+  },
+  {
+    "split": "train",
+    "prompt": "Please tell me the color of the sky.",
+    "response": "blue."
+  },
+  {
+    "split": "train",
+    "prompt": "Please tell me the color of grass.",
+    "response": "green."
+  },
+  {
+    "split": "train",
+    "prompt": "Please tell me the sound of a cat.",
+    "response": "meow."
+  },
+  {
+    "split": "train",
+    "prompt": "Please tell me the sound of a dog.",
+    "response": "woof."
+  },
+  {
+    "split": "train",
+    "prompt": "Please tell me the sound of a bird.",
+    "response": "chirp."
+  },
+  {
+    "split": "train",
+    "prompt": "Can you name the color of a tomato?",
+    "response": "red."
+  },
+  {
+    "split": "train",
+    "prompt": "Can you name the color of the sky?",
+    "response": "blue."
+  },
+  {
+    "split": "train",
+    "prompt": "Can you name the color of grass?",
+    "response": "green."
+  },
+  {
+    "split": "train",
+    "prompt": "Can you name the sound of a cat?",
+    "response": "meow."
+  },
+  {
+    "split": "train",
+    "prompt": "Can you name the sound of a dog?",
+    "response": "woof."
+  },
+  {
+    "split": "train",
+    "prompt": "Can you name the sound of a bird?",
+    "response": "chirp."
+  },
+  {
+    "split": "train",
+    "prompt": "I want the color of a tomato.",
+    "response": "red."
+  },
+  {
+    "split": "train",
+    "prompt": "I want the color of the sky.",
+    "response": "blue."
+  },
+  {
+    "split": "train",
+    "prompt": "I want the color of grass.",
+    "response": "green."
+  },
+  {
+    "split": "train",
+    "prompt": "I want the sound of a cat.",
+    "response": "meow."
+  },
+  {
+    "split": "train",
+    "prompt": "I want the sound of a dog.",
+    "response": "woof."
+  },
+  {
+    "split": "train",
+    "prompt": "I want the sound of a bird.",
+    "response": "chirp."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Please name the color of a tomato.",
+    "response": "red."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Please name the color of the sky.",
+    "response": "blue."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Please name the color of grass.",
+    "response": "green."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Please name the sound of a cat.",
+    "response": "meow."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Please name the sound of a dog.",
+    "response": "woof."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Please name the sound of a bird.",
+    "response": "chirp."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Can you tell me the color of a tomato?",
+    "response": "red."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Can you tell me the color of the sky?",
+    "response": "blue."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Can you tell me the color of grass?",
+    "response": "green."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Can you tell me the sound of a cat?",
+    "response": "meow."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Can you tell me the sound of a dog?",
+    "response": "woof."
+  },
+  {
+    "split": "held_out",
+    "prompt": "Can you tell me the sound of a bird?",
+    "response": "chirp."
+  }
+]

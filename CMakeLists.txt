@@ -9,6 +9,9 @@ project(
 
 include(CTest)
 
+option(SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL_CHAT
+  "Build the CPU abstract spiking-reservoir token experiment (no LibTorch)" ON)
+
 option(
   SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL
   "Build LibTorch temporal residual SNN experiments"
@@ -183,6 +186,9 @@ set(SNNBASE_SPIKE_EVENT_BITS 128 CACHE STRING "Spike-event bit width")
 set(SNNBASE_HISTORY_LENGTH 256 CACHE STRING "Prototype queue depth per class")
 set(SNNBASE_DECISION_APPROACH 1 CACHE STRING "snnbase decision algorithm")
 add_subdirectory("${SNNBASE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/_deps/snnbase")
+if(SNNBASE_EXPERIMENTS_ENABLE_TEMPORAL_CHAT)
+  add_subdirectory(experiments/temporal_chat)
+endif()
 
 add_library(
   snnbase_experiments

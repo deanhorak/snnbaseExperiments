@@ -1,0 +1,3 @@
+# Only the open-source tokenizer runtime. No torch/transformers/model weights.
+# This is the version used for the recorded local demonstration.
+tokenizers==0.22.2

@@ -18,6 +18,16 @@ sweep are recorded in
 
 ## Experiments
 
+### Abstract temporal SNN text generation
+
+The CPU-only [temporal chat experiment](docs/TEMPORAL_CHAT.md) borrows the
+pinned Qwen3 tokenizer and trains a small recurrent spiking model with
+dendritic coincidence, excitation/inhibition, firing adaptation, and
+training-only STDP. A supervised readout generates upstream token IDs that
+are fed back through the SNN and decoded to text. It includes an authored
+six-intent corpus, held-out paraphrases, and STDP/feature-lesion controls;
+no pretrained language-model weights or LibTorch are needed.
+
 ### MNIST digit classification
 
 The first harness reads the standard MNIST IDX files, spatially pools each 28×28 grayscale image
