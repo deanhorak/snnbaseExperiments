@@ -233,8 +233,11 @@ python3 tools/temporal_llm.py \
 ```
 
 This requires a working CUDA-enabled build and GPU access in the launching
-terminal. CUDA performance/quality must be measured on that device; CPU tests
-of this path do not establish GPU validation. The frontend restricts
+terminal. The saved 0.6B checkpoint was subsequently validated on the local
+NVIDIA GeForce RTX 3050 with 8 GiB VRAM: weights-only loading completed on
+`cuda` and the four-token continuation was ` Paris. The capital`. That short
+first-load smoke run is evidence of functional CUDA execution, not a controlled
+throughput comparison. The frontend restricts
 `--weights-only` to inference/evaluation and rejects training, calibration or
 checkpoint saving in that mode. Profile and checkpoint SHA checks still apply.
 

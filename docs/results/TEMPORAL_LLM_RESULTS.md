@@ -29,7 +29,13 @@ python3 /home/dean/repos/snnbaseExperiments/tools/temporal_llm.py \
 
 `--weights-only` loads model parameters and calibration on the selected device, without restoring CPU optimizer/RNG state. Exact training resume remains available without this flag. The original entry point also accepts `tools/temporal_chat.py --llm`; its reservoir baseline remains available.
 
-The RTX 3050 is present with 8 GiB VRAM and driver 580.173.02. CUDA execution could not be tested through this task's sandbox because NVIDIA device nodes were unavailable. CPU execution and weights-only checkpoint loading are validated. No driver installation was needed.
+The RTX 3050 is present with 8 GiB VRAM and driver 580.173.02. A subsequent
+approved host run loaded the saved 0.6B checkpoint with `--weights-only
+--device cuda` and generated ` Paris. The capital` for the four-token smoke
+prompt. The run recorded 1.00 seconds to first token and 1.69 generated
+tokens/second, including first-load overhead. This is functional CUDA
+validation, not a controlled CPU/GPU performance comparison. No driver
+installation was needed.
 
 ## Measured language behavior
 
