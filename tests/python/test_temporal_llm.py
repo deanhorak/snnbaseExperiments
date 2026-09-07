@@ -134,6 +134,90 @@ class TemporalLlmTests(unittest.TestCase):
         with self.assertRaisesRegex(llm.ContractError, "decodable"):
             llm.generate(lambda *a, **k: {"output_ids": [256]}, ByteTokenizer(), "abc", llm.load_profile("tiny"), args)
 
+    def test_benchmark_reuses_session_retains_warmups_and_excludes_them_from_medians(self):
+        calls, starts = [], []
+
+        class FakeSession:
+            def __init__(self, command):
+                starts.append(command)
+
+            def request(self, op, **fields):
+                if op == "metadata":
+                    return {"metadata": {"device": "cpu"}}
+                self_case.assertEqual(op, "generate")
+                index = len(calls)
+                calls.append(fields)
+                latency = [1000.0, 800.0, 20.0, 10.0, 30.0][index]
+                return {"output_ids": [65 + index], "finish_reason": "length",
+                        "metrics": {"generated_tokens": 1, "latency_ms": latency,
+                                    "time_to_first_token_ms": latency / 2,
+                                    "generated_tokens_per_second": 1000 / latency}}
+
+            def close(self):
+                calls.append("closed")
+
+        self_case = self
+        args = self.arguments("--prompt", "abc", "--max-new-tokens", "1",
+                              "--benchmark-repeats", "3")
+        with patch.object(llm, "Session", FakeSession), \
+             patch.object(llm, "load_tokenizer", return_value=ByteTokenizer()), \
+             patch.object(llm.time, "perf_counter", side_effect=range(12)), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            result = llm.run(args)
+        bench = result["benchmark"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(calls[-1], "closed")
+        self.assertEqual(len(calls[:-1]), 5)
+        self.assertTrue(all(fields == calls[0] for fields in calls[:-1]))
+        self.assertEqual([row["output_ids"] for row in bench["warmups"]], [[65], [66]])
+        self.assertEqual([row["output_ids"] for row in bench["samples"]], [[67], [68], [69]])
+        self.assertEqual(bench["summary"]["median_latency_ms"], 20)
+        self.assertEqual(bench["summary"]["median_time_to_first_token_ms"], 10)
+        self.assertEqual(bench["summary"]["median_generated_tokens_per_second"], 50)
+        self.assertEqual(bench["summary"]["median_wall_ms"], 1000)
+        self.assertEqual(bench["summary"]["sum_sample_wall_ms"], 3000)
+        self.assertEqual(bench["total_wall_ms"], 11000)
+        self.assertFalse(bench["summary"]["all_output_ids_identical"])
+        self.assertTrue(bench["warmups_excluded_from_summary"])
+        self.assertEqual(result["generation"]["output_ids"], [67])
+
+    def test_benchmark_argument_bounds_rejected_before_loading(self):
+        for argv in (
+            ["--prompt", "abc", "--benchmark-repeats", "-1"],
+            ["--prompt", "abc", "--benchmark-repeats", "101"],
+            ["--prompt", "abc", "--benchmark-repeats", "2", "--benchmark-warmups", "-1"],
+            ["--prompt", "abc", "--benchmark-repeats", "2", "--benchmark-warmups", "21"],
+            ["--prompt", "abc", "--benchmark-warmups", "0"],
+            ["--benchmark-repeats", "2"],
+            ["--chat", "--benchmark-repeats", "2"],
+            ["--plan", "--prompt", "abc", "--benchmark-repeats", "2"],
+        ):
+            with self.subTest(argv=argv), \
+                 patch.object(llm, "load_tokenizer", side_effect=AssertionError("tokenizer")), \
+                 patch.object(llm, "Session", side_effect=AssertionError("process")), \
+                 self.assertRaises(llm.ContractError):
+                llm.run(llm.build_parser().parse_args(argv))
+
+    def test_benchmark_zero_warmups_and_invalid_core_metrics(self):
+        args = self.arguments("--prompt", "abc", "--max-new-tokens", "1",
+                              "--benchmark-repeats", "1", "--benchmark-warmups", "0")
+        response = {"output_ids": [65], "finish_reason": "length",
+                    "metrics": {"generated_tokens": 1, "latency_ms": 10.0,
+                                "time_to_first_token_ms": 8.0, "generated_tokens_per_second": 100.0}}
+        result = llm.benchmark_generation(lambda *a, **k: copy.deepcopy(response),
+                                         ByteTokenizer(), llm.load_profile("tiny"), args)
+        self.assertEqual(result["warmups"], [])
+        self.assertEqual(len(result["samples"]), 1)
+        self.assertTrue(result["summary"]["all_output_ids_identical"])
+        for name, value in (("latency_ms", float("nan")), ("latency_ms", True),
+                            ("time_to_first_token_ms", 11), ("generated_tokens", 2),
+                            ("generated_tokens_per_second", -1)):
+            invalid = copy.deepcopy(response)
+            invalid["metrics"][name] = value
+            with self.subTest(name=name, value=value), self.assertRaises(llm.ContractError):
+                llm.benchmark_generation(lambda *a, **k: invalid,
+                                         ByteTokenizer(), llm.load_profile("tiny"), args)
+
     def test_checkpoint_resume_restores_settings_and_checks_binding(self):
         with tempfile.TemporaryDirectory() as temporary:
             checkpoint = Path(temporary) / "checkpoint.pt"

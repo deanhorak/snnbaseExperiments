@@ -397,6 +397,13 @@ void test_bounded_jsonl_protocol() {
                   "\"build_provenance\":{\"experiments\":{\"revision\":\"unknown\",\"dirty\":true},\"snnbase\":{\"revision\":\"unknown\",\"dirty\":true}}") !=
                   std::string::npos,
           "metadata protocol response is incomplete");
+  const auto expected_cuda_capability =
+      snnbase::language::cuda_temporal_encoding_available() ? "true" : "false";
+  require(text.find(std::string("\"temporal_backend\":{\"fused_cuda_compiled\":") +
+                    expected_cuda_capability +
+                    ",\"generation_fused_cuda_eligible\":false,\"gradient_enabled_fused_cuda\":false}") !=
+              std::string::npos,
+          "CPU metadata confused compiled CUDA capability with eligible execution");
   require(text.find("\"request_id\":\"\",\"ok\":false") !=
               std::string::npos &&
               text.find("unsupported token protocol") != std::string::npos,
@@ -605,13 +612,20 @@ void test_temporal_calibration_training_and_resume() {
   auto generation = GenerationConfig{.maximum_new_tokens = 3, .seed = 7};
   generation.prefill_chunk_size = 0;
   const auto full = runner.generate(tokens, generation);
-  generation.prefill_chunk_size = 2;
-  const auto chunked = runner.generate(tokens, generation);
-  require(chunked.output_ids == full.output_ids,
-          "temporal generation changed with prefill chunk size");
-  require(std::abs(chunked.metrics.mean_spike_rate -
-                   full.metrics.mean_spike_rate) < 1.0e-6,
-          "temporal generation activity changed with prefill chunk size");
+  for (const auto chunk_size : {1U, 2U, 4U}) {
+    generation.prefill_chunk_size = chunk_size;
+    const auto chunked = runner.generate(tokens, generation);
+    require(chunked.output_ids == full.output_ids,
+            "temporal generation changed with prefill chunk size");
+    require(std::isfinite(chunked.metrics.mean_spike_rate) &&
+                std::abs(chunked.metrics.mean_spike_rate -
+                         full.metrics.mean_spike_rate) < 1.0e-6,
+            "temporal generation activity changed with uneven prefill chunks");
+    require(std::isfinite(chunked.metrics.elapsed_milliseconds) &&
+                chunked.metrics.elapsed_milliseconds >=
+                    chunked.metrics.time_to_first_token_milliseconds,
+            "temporal generation did not report completed timing");
+  }
   const auto checkpoint = temporary_checkpoint("snnbase-temporal-resume");
   runner.save_checkpoint(checkpoint);
   Runner restored(config);

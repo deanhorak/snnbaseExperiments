@@ -1015,11 +1015,17 @@ GenerationResult Runner::generate(
   const auto was_training = impl_->model->is_training();
   impl_->model->eval();
   impl_->model->reset_state();
+  if (impl_->selected_device.is_cuda()) {
+    // Exclude any pending loading/previous-request work from this request.
+    torch::cuda::synchronize();
+  }
   const auto started = Clock::now();
   auto tokens = make_token_tensor(input_ids, impl_->selected_device);
   snnbase::language::KeyValueCache cache;
   snnbase::language::DecoderOutput output;
-  double rate_sum = 0.0;
+  // Keep telemetry on the device until generation has finished. Reading a
+  // scalar after each forward would force an extra CUDA synchronization.
+  torch::Tensor rate_sum;
   std::size_t rate_samples = 0;
   const auto chunk = generation.prefill_chunk_size == 0U
                          ? tokens.size(1)
@@ -1030,8 +1036,9 @@ GenerationResult Runner::generate(
     output = impl_->model->forward_last_cached(
         tokens.slice(1, start, end), cache);
     const auto processed_tokens = static_cast<std::size_t>(end - start);
-    rate_sum += output.spikes.mean_rate.item<double>() *
-                static_cast<double>(processed_tokens);
+    const auto weighted_rate = output.spikes.mean_rate.to(torch::kFloat64) *
+                               static_cast<double>(processed_tokens);
+    rate_sum = rate_sum.defined() ? rate_sum + weighted_rate : weighted_rate;
     rate_samples += processed_tokens;
   }
   GenerationResult result;
@@ -1052,10 +1059,13 @@ GenerationResult Runner::generate(
     }
     if (index + 1U < generation.maximum_new_tokens) {
       output = impl_->model->forward_last_cached(next, cache);
-      rate_sum += output.spikes.mean_rate.item<double>();
+      rate_sum = rate_sum + output.spikes.mean_rate.to(torch::kFloat64);
       ++rate_samples;
     }
   }
+  const auto mean_spike_rate = rate_samples == 0U
+                                  ? 0.0
+                                  : rate_sum.item<double>() / rate_samples;
   const auto elapsed = std::chrono::duration<double, std::milli>(
       Clock::now() - started);
   result.metrics = {
@@ -1067,7 +1077,7 @@ GenerationResult Runner::generate(
               ? 0.0
               : 1000.0 * static_cast<double>(result.output_ids.size()) /
                     elapsed.count(),
-      .mean_spike_rate = rate_samples == 0U ? 0.0 : rate_sum / rate_samples,
+      .mean_spike_rate = mean_spike_rate,
       .generated_tokens = result.output_ids.size()};
   impl_->model->train(was_training);
   impl_->model->reset_state();
@@ -1628,6 +1638,12 @@ ProtocolServeResult serve_token_protocol(
       if (request.operation == "metadata") {
         const auto& model = runner.config().model;
         const auto state = runner.training_state();
+        const bool fused_cuda_compiled =
+            snnbase::language::cuda_temporal_encoding_available();
+        const bool generation_fused_cuda_eligible =
+            fused_cuda_compiled && runner.device().starts_with("cuda") &&
+            model.spiking && model.temporal_spiking &&
+            model.temporal_decay == 0.0;
         write_prefix(output, request_id, true);
         output << ",\"metadata\":{\"device\":\""
                << json_escape(runner.device()) << "\",\"parameter_count\":"
@@ -1647,6 +1663,11 @@ ProtocolServeResult serve_token_protocol(
                << ",\"temporal_decay\":" << model.temporal_decay
                << ",\"tie_word_embeddings\":"
                << (model.tie_word_embeddings ? "true" : "false")
+               << ",\"temporal_backend\":{\"fused_cuda_compiled\":"
+               << (fused_cuda_compiled ? "true" : "false")
+               << ",\"generation_fused_cuda_eligible\":"
+               << (generation_fused_cuda_eligible ? "true" : "false")
+               << ",\"gradient_enabled_fused_cuda\":false}"
                << ",\"build_provenance\":{\"experiments\":{\"revision\":\""
                << json_escape(
                       runner.config().build_provenance.experiments.revision)

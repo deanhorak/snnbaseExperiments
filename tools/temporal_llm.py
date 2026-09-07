@@ -14,7 +14,9 @@ import json
 import math
 import os
 from pathlib import Path
+import statistics
 import sys
+import time
 from typing import Any, Callable, Mapping, Sequence
 
 from chatbot_token_protocol import CoreProcess, PROTOCOL, ProtocolError
@@ -353,6 +355,56 @@ def generate(request: Callable[..., Mapping[str, Any]], tokenizer: Any, text: st
     return response
 
 
+def benchmark_generation(request: Callable[..., Mapping[str, Any]], tokenizer: Any,
+                         profile: Mapping[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    """Measure repeated independent requests against one already loaded core."""
+    warmup_count = 2 if args.benchmark_warmups is None else args.benchmark_warmups
+    warmups, samples = [], []
+    started = time.perf_counter()
+    for index in range(warmup_count + args.benchmark_repeats):
+        sample_started = time.perf_counter()
+        response = generate(request, tokenizer, args.prompt, profile, args)
+        wall_ms = (time.perf_counter() - sample_started) * 1000.0
+        metrics = response.get("metrics", {})
+        if not isinstance(metrics, Mapping):
+            raise ContractError("core returned invalid benchmark metrics")
+        for name in ("latency_ms", "time_to_first_token_ms", "generated_tokens_per_second"):
+            value = metrics.get(name)
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ContractError(f"core returned invalid benchmark {name}")
+        if (metrics["time_to_first_token_ms"] > metrics["latency_ms"] or
+                type(metrics.get("generated_tokens")) is not int or
+                metrics["generated_tokens"] != len(response["output_ids"]) or
+                not response["output_ids"]):
+            raise ContractError("core returned inconsistent benchmark token/timing metrics")
+        target = warmups if index < warmup_count else samples
+        target.append({**response, "sample_index": len(target) + 1, "wall_ms": wall_ms})
+    total_wall_ms = (time.perf_counter() - started) * 1000.0
+    summary = {f"median_{name}": statistics.median(row["metrics"][name] for row in samples)
+               for name in ("latency_ms", "time_to_first_token_ms", "generated_tokens_per_second")}
+    summary.update({
+        "median_wall_ms": statistics.median(row["wall_ms"] for row in samples),
+        "sum_sample_wall_ms": sum(row["wall_ms"] for row in samples),
+        "measured_generated_tokens": sum(len(row["output_ids"]) for row in samples),
+        "all_output_ids_identical": all(row["output_ids"] == samples[0]["output_ids"] for row in samples),
+    })
+    return {
+        "warmup_count": warmup_count, "repeat_count": args.benchmark_repeats,
+        "same_core_process": True, "state_reset_per_request": True,
+        "warmups_excluded_from_summary": True,
+        "timing_scope": {
+            "core": "Completed generation including prompt prefill and decoding; excludes model loading, tokenizer and protocol transport.",
+            "wall": "Each sample includes prompt encoding, protocol round trip and output decoding; excludes model/process startup.",
+            "total_wall": "Includes all warmups, measured samples and benchmark bookkeeping; not used for summary medians.",
+        },
+        "settings": {name: getattr(args, name) for name in (
+            "device", "threads", "seed", "max_new_tokens", "prefill_chunk_size",
+            "temperature", "top_k", "top_p")},
+        "prompt": args.prompt, "warmups": warmups, "samples": samples,
+        "total_wall_ms": total_wall_ms, "summary": summary,
+    }
+
+
 def checkpoint_sidecar(path: Path) -> Path:
     return path.with_name(path.name + ".temporal.json")
 
@@ -392,6 +444,10 @@ def build_parser() -> argparse.ArgumentParser:
     action = p.add_mutually_exclusive_group()
     action.add_argument("--chat", action="store_true")
     action.add_argument("--prompt")
+    p.add_argument("--benchmark-repeats", type=int, default=0,
+                   help="repeat --prompt in the same process for 1..100 measured samples; 0 disables benchmarking")
+    p.add_argument("--benchmark-warmups", type=int,
+                   help="0..20 warmup requests excluded from benchmark summary (default 2)")
     p.add_argument("--max-new-tokens", type=int, default=32)
     p.add_argument("--prefill-chunk-size", type=int, default=128, help="prompt tokens per cached prefill chunk; 0 processes the whole prompt")
     p.add_argument("--temperature", type=float, default=0.0)
@@ -432,6 +488,14 @@ def resolve_configuration(args: argparse.Namespace) -> tuple[dict[str, Any], Map
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    if not 0 <= args.benchmark_repeats <= 100:
+        raise ContractError("--benchmark-repeats must be in 0..100")
+    if args.benchmark_warmups is not None and not 0 <= args.benchmark_warmups <= 20:
+        raise ContractError("--benchmark-warmups must be in 0..20")
+    if args.benchmark_repeats and (not args.prompt or args.plan):
+        raise ContractError("benchmarking requires --prompt and cannot be combined with --plan")
+    if args.benchmark_warmups is not None and not args.benchmark_repeats:
+        raise ContractError("--benchmark-warmups requires --benchmark-repeats")
     profile, restored = resolve_configuration(args)
     if args.plan:
         return resource_plan(profile)
@@ -502,7 +566,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if corpora.get("evaluation"):
             report["evaluation"] = evaluate_records(session.request, corpora["evaluation"])
         if args.prompt:
-            report["generation"] = generate(session.request, tokenizer, args.prompt, profile, args)
+            if args.benchmark_repeats:
+                report["benchmark"] = benchmark_generation(session.request, tokenizer, profile, args)
+                report["generation"] = report["benchmark"]["samples"][0]
+            else:
+                report["generation"] = generate(session.request, tokenizer, args.prompt, profile, args)
             print(report["generation"]["text"])
         if args.chat:
             print("Base-model conversation experiment. /reset clears history; /quit exits.", file=sys.stderr)
@@ -561,6 +629,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(json.dumps(report, indent=2, allow_nan=False))
         elif args.eval_corpus:
             print(json.dumps(report.get("evaluation"), indent=2), file=sys.stderr)
+        if args.benchmark_repeats:
+            print(json.dumps(report["benchmark"]["summary"], indent=2), file=sys.stderr)
         return 0
     except KeyboardInterrupt:
         print("temporal_llm: interrupted", file=sys.stderr)

@@ -60,9 +60,27 @@ Generated continuation:
 
 One CPU generation measurement produced 24 tokens in 6.29 seconds (3.82 tokens/second). This is a single runtime observation, not a controlled speed or energy benchmark. The base model has not been instruction-tuned by this experiment; general assistant quality is not established.
 
+A subsequent controlled RTX 3050 comparison used the same frozen checkpoint,
+prompt and CUDA environment. Each binary ran two excluded warmups followed by
+five retained 32-token generations in one loaded process. All original and
+fused runs produced identical token IDs. The fused CUDA encoder also reproduced
+the original CUDA development metrics exactly: NLL 2.402142, perplexity
+11.046817, token accuracy 48.41% and mean event activity 0.349393.
+
+| Warm CUDA measurement | Original eager encoder | Fused encoder | Change |
+|---|---:|---:|---:|
+| Median generation rate | 2.229 tokens/s | 9.580 tokens/s | 4.30× |
+| Median total latency, 32 tokens | 14.356 s | 3.340 s | −76.7% |
+| Median time to first token | 449.3 ms | 105.2 ms | −76.6% |
+
+The benchmark measures this model, prompt and RTX 3050 rather than universal
+throughput. CUDA parity tests additionally cover pulse boundaries, four dtypes,
+strided tensors, gradient/fallback paths, non-default streams and cached decoder
+execution.
+
 ## Correctness and training
 
-- The Python suite ran 125 tests successfully, with 2 optional tests skipped.
+- The updated Python suite ran 128 tests: 126 passed and 2 optional tests skipped.
 - Both library language test targets passed, including legacy behavior and the new temporal decoder tests.
 - Runner and Qwen import C++ test targets passed, including calibration, training, exact resume, weights-only loading, strict identities and a different untied architecture imported from shards.
 - Temporal tests check hard-event reconstruction, silence without an analog bypass, calibration headroom, causal gradients, future-token isolation, independent stream caches, full/chunk/token equivalence, compact state storage and checkpoint versions.

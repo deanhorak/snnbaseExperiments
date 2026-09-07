@@ -81,8 +81,9 @@ env -u LD_LIBRARY_PATH cmake -S . -B build-temporal-llm -G Ninja \
   -DSNNBASE_EXPERIMENTS_ENABLE_TEMPORAL=OFF \
   -DSNNBASE_EXPERIMENTS_ENABLE_CHATBOT=ON \
   -DSNNBASE_EXPERIMENTS_ENABLE_GUI=OFF \
+  -DSNNBASE_ENABLE_CUDA_LANGUAGE_KERNELS=ON \
   -DSNNBASE_SOURCE_DIR=/home/dean/repos/snnbase \
-  -DSNNBASE_EXPECTED_SNNBASE_REVISION=0d4fbcfd3d4bbb0137f7fb9b2dc704a8bb80d799 \
+  -DSNNBASE_EXPECTED_SNNBASE_REVISION=10ba9df7cd1819c198124666d11c4ae2b3499ebf \
   -DSNNBASE_REQUIRE_CLEAN_SNNBASE=ON
 cmake --build build-temporal-llm --target chatbot_experiment -j 2
 python3 tools/temporal_llm.py --profile qwen3-0.6b --plan
@@ -96,7 +97,7 @@ For a genuinely CPU-only LibTorch installation, configure a separate build with
 that installation's CMake prefix and omit the CUDA toolchain option.
 
 The reproducible library dependency is commit
-`0d4fbcfd3d4bbb0137f7fb9b2dc704a8bb80d799` on `ReturmToBasics`. The configure
+`10ba9df7cd1819c198124666d11c4ae2b3499ebf` on `ReturmToBasics`. The configure
 command requires that exact clean `snnbase` checkout; select that commit before
 building if the library has subsequently advanced. Historical measurement
 reports retain the executable digests from the runs that produced them.
@@ -175,6 +176,54 @@ and `--seed` control sampling. Prompt prefill uses a KV cache in chunks of
 `--prefill-chunk-size` tokens (default 128); generation then feeds one new token
 at a time. `--prefill-chunk-size 0` requests a whole-prompt prefill. Prompt length
 plus requested completion must fit the selected context.
+
+For repeated generation measurements, keep the model loaded and send the same
+prompt through one process:
+
+```bash
+python3 tools/temporal_llm.py \
+  --checkpoint artifacts/temporal_llm/qwen3-0.6b-calibrated.pt \
+  --weights-only --device cuda --prompt "The capital of France is" \
+  --max-new-tokens 32 --benchmark-warmups 2 --benchmark-repeats 5 \
+  --report artifacts/temporal_llm/qwen3-0.6b-cuda-benchmark.json
+```
+
+`--benchmark-repeats` accepts 1–100 measured requests; zero, the default, keeps
+ordinary single-prompt generation. `--benchmark-warmups` accepts 0–20 requests
+and defaults to two when benchmarking. Benchmarking requires `--prompt`.
+Each request resets the KV/neuron state and reuses the same seed and generation
+settings. Warmups and measured samples retain every output token ID, decoded
+text, token count, core latency, time to first token and frontend wall time in
+the JSON report. The summary contains medians from measured samples only,
+their total generated tokens and whether their output token IDs agree. The
+first measured continuation is printed, followed by the summary on stderr.
+
+Core timing includes completed prompt prefill, decoding and spike-rate
+collection, with CUDA synchronized before its timer starts. Frontend wall
+timing also includes tokenization, protocol transport and decoding. Neither
+includes model/process startup; the report's total benchmark wall time includes
+warmups and bookkeeping and is not used for the summary medians. Generation
+tokens/second includes prefill and uses the actual number of emitted tokens,
+so EOS or differing completions can change the amount of work. Use matching
+prompt, context, sampling, thread and token-count settings when comparing runs.
+
+Run CPU and CUDA benchmarks separately. For the current checkpoint, whose
+dense weights were imported and calibrated without fine-tuning, obtain the
+source ANN control in another process using `--profile qwen3-0.6b --ann` in
+place of `--checkpoint ... --weights-only`, retaining the other settings.
+Check model identity and actual generated token counts in both reports.
+Checkpoint signatures deliberately prevent switching a saved SNN checkpoint
+to ANN mode. A source-archive ANN control would not isolate conversion effects
+after SNN fine-tuning because its dense weights would differ. These benchmark
+options measure the implementation; they make no speed or energy claim.
+
+The report's `metadata.temporal_backend` distinguishes compiled fused CUDA
+support from eligibility for this model's generation requests. Fused inference
+requires the optional library CUDA kernels, a CUDA device, temporal spiking
+enabled and zero cross-token decay. It runs only without gradients; training
+retains the existing ATen surrogate path. The metadata reports eligibility,
+not per-request profiling evidence of kernel execution. These execution
+capabilities are not part of checkpoint signatures.
 
 A direct `--profile qwen3-0.6b --prompt ...` run imports the source weights and
 uses initially configured temporal scales. Use calibration and held-out
